@@ -1,7 +1,8 @@
 [build]
+  # Installa le dipendenze del client e poi builda
+  command = "cd client && npm install && npm run build"
   publish = "client/dist"
-  command = "npm run build"
-
+  functions = "netlify/functions"
 [dev]
   command = "npm run dev"
   port = 3999         # porta dove Netlify espone il sito
