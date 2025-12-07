@@ -1,0 +1,16 @@
+# Local Netlify folder
+.netlify
+# Secrets
+.env
+API key private/
+# Cartelle enormi da ignorare
+node_modules/
+client/node_modules/
+server/node_modules/
+
+dist/
+client/dist/
+server/dist/
+
+# Roba di macOS
+.DS_Store
