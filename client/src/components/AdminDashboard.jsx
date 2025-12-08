@@ -150,9 +150,14 @@ export default function AdminDashboard() {
 
         // Chiamiamo la Netlify Function che espone i dati della dashboard
         const res = await fetch("/.netlify/functions/admin-dashboard", {
+          method: "POST",
           headers: {
+            "Content-Type": "application/json",
             "x-admin-key": adminKey || "",
           },
+          body: JSON.stringify({
+            secret: adminKey || "",
+          }),
         });
 
         if (res.status === 401) {
