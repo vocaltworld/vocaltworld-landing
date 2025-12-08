@@ -108,9 +108,17 @@ exports.handler = async (event) => {
             const level = props.survey_level || null;
             const interested = level != null || scoreNum >= 5;
 
+            const createdAt =
+              completedAt || attrs.created_at || attrs.created || null;
+
+            // Normalizziamo i campi così che il frontend possa leggerli in modo coerente
+            // - `date`: usato attualmente dalla dashboard
+            // - `createdAt` / `submittedAt`: alias utili se in futuro cambiamo i nomi nel frontend
             surveys.push({
               email,
-              date: completedAt,
+              date: createdAt,
+              createdAt,
+              submittedAt: createdAt,
               score: scoreNum,
               interested,
             });
@@ -121,6 +129,17 @@ exports.handler = async (event) => {
       // Paginazione
       nextUrl = data.links && data.links.next ? data.links.next : null;
     }
+
+    // Ordiniamo i risultati per data (più recenti in alto)
+    surveys.sort((a, b) => {
+      if (!a.date && !b.date) return 0;
+      if (!a.date) return 1;
+      if (!b.date) return -1;
+      const da = new Date(a.date);
+      const db = new Date(b.date);
+      if (Number.isNaN(da.getTime()) || Number.isNaN(db.getTime())) return 0;
+      return db - da;
+    });
 
     // 4️⃣ Calcolo statistiche
     const total = surveys.length;
