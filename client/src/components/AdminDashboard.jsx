@@ -187,7 +187,7 @@ export default function AdminDashboard() {
         }
 
         // Ultimi in alto
-        setSurveys([...nextSurveys].reverse());
+        setSurveys(nextSurveys);
 
         // Se la function fornisce già le statistiche le usiamo direttamente,
         // altrimenti proviamo a calcolarle in modo compatibile con la UI esistente.
@@ -196,8 +196,9 @@ export default function AdminDashboard() {
         } else {
           const total = nextSurveys.length;
 
-          const interestedCount = nextSurveys.filter((s) => s.isInterested)
-            .length;
+          const interestedCount = nextSurveys.filter(
+            (s) => s.isInterested ?? s.interested
+          ).length;
           const notInterestedCount = total - interestedCount;
 
           const interestedPercent = total
@@ -424,19 +425,21 @@ export default function AdminDashboard() {
                     {s.email || "-"}
                   </div>
                   <div className="admin-td admin-td-date">
-                    {formatDate(s.createdAt || s.surveyCompletedAt)}
+                    {formatDate(s.createdAt || s.surveyCompletedAt || s.date)}
                   </div>
                   <div className="admin-td admin-td-score">
-                    {s.interestScore ?? "-"}
+                    {s.interestScore ?? s.score ?? "-"}
                   </div>
                   <div className="admin-td admin-td-int">
                     <span
                       className={
                         "admin-pill " +
-                        (s.isInterested ? "admin-pill-yes" : "admin-pill-no")
+                        ((s.isInterested ?? s.interested)
+                          ? "admin-pill-yes"
+                          : "admin-pill-no")
                       }
                     >
-                      {s.isInterested ? "SI" : "NO"}
+                      {(s.isInterested ?? s.interested) ? "SI" : "NO"}
                     </span>
                   </div>
                 </button>
@@ -471,7 +474,11 @@ export default function AdminDashboard() {
               <strong>Email:</strong> {selectedSurvey.email || "-"}
               <br />
               <strong>Data compilazione:</strong>{" "}
-              {formatDate(selectedSurvey.createdAt || selectedSurvey.surveyCompletedAt)}
+              {formatDate(
+                selectedSurvey.createdAt ||
+                  selectedSurvey.surveyCompletedAt ||
+                  selectedSurvey.date
+              )}
             </p>
 
             <div className="admin-detail-grid">
@@ -514,14 +521,14 @@ export default function AdminDashboard() {
                   Score interesse (algoritmo)
                 </div>
                 <div className="admin-detail-value">
-                  {selectedSurvey.interestScore ?? "-"}
+                  {selectedSurvey.interestScore ?? selectedSurvey.score ?? "-"}
                 </div>
               </div>
 
               <div className="admin-detail-card">
                 <div className="admin-detail-label">Profilo calcolato</div>
                 <div className="admin-detail-value">
-                  {selectedSurvey.isInterested
+                  {selectedSurvey.isInterested ?? selectedSurvey.interested
                     ? "Interessato"
                     : "Non interessato"}
                 </div>
