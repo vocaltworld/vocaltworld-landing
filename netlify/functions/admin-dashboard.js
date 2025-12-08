@@ -1,3 +1,10 @@
+const fs = require("fs/promises");
+const path = require("path");
+
+const DATA_DIR = path.join(__dirname, "../../server/data");
+const SURVEYS_FILE = path.join(DATA_DIR, "surveys.json");
+const STATS_FILE = path.join(DATA_DIR, "stats.json");
+
 exports.handler = async (event) => {
   // Permettiamo solo POST dal form
   if (event.httpMethod !== "POST") {
@@ -43,12 +50,54 @@ exports.handler = async (event) => {
     };
   }
 
-  // Confronto dopo normalizzazione
   if (normalizedClient === normalizedServer) {
-    return {
-      statusCode: 200,
-      body: JSON.stringify({ ok: true }),
-    };
+    try {
+      // Leggo i dati dei sondaggi
+      let surveys = [];
+      let stats = {
+        total: 0,
+        interested: 0,
+        notInterested: 0,
+        interestedPercent: 0,
+        notInterestedPercent: 0,
+      };
+
+      try {
+        const surveysRaw = await fs.readFile(SURVEYS_FILE, "utf8");
+        if (surveysRaw) {
+          surveys = JSON.parse(surveysRaw);
+        }
+      } catch (err) {
+        console.error("Errore lettura surveys.json:", err);
+      }
+
+      try {
+        const statsRaw = await fs.readFile(STATS_FILE, "utf8");
+        if (statsRaw) {
+          stats = JSON.parse(statsRaw);
+        }
+      } catch (err) {
+        console.error("Errore lettura stats.json:", err);
+      }
+
+      return {
+        statusCode: 200,
+        body: JSON.stringify({
+          ok: true,
+          surveys,
+          stats,
+        }),
+      };
+    } catch (err) {
+      console.error("Errore lettura dati dashboard:", err);
+      return {
+        statusCode: 500,
+        body: JSON.stringify({
+          ok: false,
+          error: "Dashboard read error",
+        }),
+      };
+    }
   }
 
   // Debug “soft”: nessun valore, solo lunghezze
