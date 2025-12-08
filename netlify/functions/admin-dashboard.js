@@ -1,50 +1,38 @@
 exports.handler = async (event) => {
-  let secretFromClient = "";
-
-  // 1. Recupero il segreto in base al metodo HTTP
-  if (event.httpMethod === "POST") {
-    // Richiesta dal form (login)
-    try {
-      const body = JSON.parse(event.body || "{}");
-      secretFromClient = body.secret || "";
-    } catch (err) {
-      console.error("Errore parsing body POST:", err);
-      return {
-        statusCode: 400,
-        body: JSON.stringify({ ok: false, error: "Bad request" }),
-      };
-    }
-  } else if (event.httpMethod === "GET") {
-    // Richieste di caricamento dati che passano il segreto come query o header
-    const qs = event.queryStringParameters || {};
-    secretFromClient = qs.secret || "";
-
-    // Se non arriva in query, provo dagli header
-    if (!secretFromClient) {
-      const headers = event.headers || {};
-      secretFromClient =
-        headers["x-admin-secret"] ||
-        headers["X-Admin-Secret"] ||
-        headers["x-admin-secret".toLowerCase()] ||
-        "";
-    }
-  } else {
-    // Tutti gli altri metodi NON sono permessi
+  // Permettiamo solo POST dal form
+  if (event.httpMethod !== "POST") {
     return {
       statusCode: 405,
       body: JSON.stringify({ ok: false, error: "Method not allowed" }),
     };
   }
 
-  // Normalizzo il segreto arrivato dal client (evito spazi / newline)
-  secretFromClient = String(secretFromClient || "").trim();
+  let secretFromClient = "";
 
-  let adminKey = process.env.ADMIN_DASHBOARD_KEY;
-  // Normalizzo anche la chiave lato server
-  adminKey = String(adminKey || "").trim();
+  try {
+    const body = JSON.parse(event.body || "{}");
 
-  // Debug soft: verifico solo che la env esista (NON stampo il valore)
-  if (!adminKey) {
+    // Accettiamo diversi possibili nomi di campo, così siamo sicuri
+    const { secret, adminSecret, password, code } = body;
+
+    secretFromClient = secret || adminSecret || password || code || "";
+  } catch (err) {
+    console.error("Errore parsing body:", err);
+    return {
+      statusCode: 400,
+      body: JSON.stringify({ ok: false, error: "Bad request" }),
+    };
+  }
+
+  const adminKey = process.env.ADMIN_DASHBOARD_KEY || "";
+
+  // Funzione di normalizzazione: niente null/undefined, niente spazi ai lati
+  const normalize = (s) => (s || "").trim();
+
+  const normalizedClient = normalize(secretFromClient);
+  const normalizedServer = normalize(adminKey);
+
+  if (!normalizedServer) {
     console.error("ADMIN_DASHBOARD_KEY non è impostata su Netlify!");
     return {
       statusCode: 500,
@@ -55,17 +43,22 @@ exports.handler = async (event) => {
     };
   }
 
-  // Confronto 1:1 tra quello che digiti e la env su Netlify
-  if (secretFromClient === adminKey) {
+  // Confronto dopo normalizzazione
+  if (normalizedClient === normalizedServer) {
     return {
       statusCode: 200,
       body: JSON.stringify({ ok: true }),
     };
   }
 
-  // Codice errato
+  // Debug “soft”: nessun valore, solo lunghezze
   return {
     statusCode: 401,
-    body: JSON.stringify({ ok: false, error: "Invalid secret" }),
+    body: JSON.stringify({
+      ok: false,
+      error: "Invalid secret",
+      clientLength: normalizedClient.length,
+      serverLength: normalizedServer.length,
+    }),
   };
 };
