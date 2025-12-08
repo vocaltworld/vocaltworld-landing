@@ -114,6 +114,59 @@ exports.handler = async (event) => {
             // Normalizziamo i campi così che il frontend possa leggerli in modo coerente
             // - `date`: usato attualmente dalla dashboard
             // - `createdAt` / `submittedAt`: alias utili se in futuro cambiamo i nomi nel frontend
+            // Mappiamo le risposte del sondaggio (se presenti) in un oggetto "answers"
+            const answers = {
+              // Uso principale / contesto d'uso
+              mainUse:
+                props.q1_main_use ||
+                props.main_use ||
+                props.uso_principale ||
+                null,
+
+              // Frequenza con cui ha bisogno di tradurre
+              frequency:
+                props.q2_frequency ||
+                props.frequency ||
+                props.quanto_spesso_traduci ||
+                null,
+
+              // Quanto gli interesserebbe un traduttore vocale offline
+              interestOfflineDevice:
+                props.q3_interest_offline_device ||
+                props.interesse_traduttore_offline ||
+                null,
+
+              // Fascia di prezzo considerata ok
+              priceRange:
+                props.q4_price_range ||
+                props.fascia_prezzo ||
+                null,
+
+              // Soluzione che usa oggi per tradurre
+              currentSolution:
+                props.q5_current_solution ||
+                props.soluzione_attuale ||
+                null,
+
+              // Difficoltà a comunicare in lingua straniera
+              difficulty:
+                props.q6_difficulty_foreign_language ||
+                props.difficolta_lingua ||
+                null,
+
+              // Interesse immediato per un traduttore offline come Vocal T World
+              immediateInterest:
+                props.q7_immediate_interest ||
+                props.interesse_immediato ||
+                null,
+
+              // Profilo calcolato (es. "Interessato", "Pioneer", ecc.)
+              profileLabel:
+                props.survey_profile_label ||
+                props.survey_level ||
+                null,
+            };
+
             surveys.push({
               email,
               date: createdAt,
@@ -121,6 +174,9 @@ exports.handler = async (event) => {
               submittedAt: createdAt,
               score: scoreNum,
               interested,
+              answers,
+              // Manteniamo anche tutte le properties originali per eventuale debug futuro
+              rawProperties: props,
             });
           }
         }
