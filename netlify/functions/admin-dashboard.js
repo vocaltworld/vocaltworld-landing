@@ -1,24 +1,23 @@
 exports.handler = async (event) => {
-  // Permettiamo solo POST dal form
-  if (event.httpMethod !== "POST") {
-    return {
-      statusCode: 405,
-      body: JSON.stringify({ ok: false, error: "Method not allowed" }),
-    };
-  }
-
   let secretFromClient = "";
 
   try {
     const body = JSON.parse(event.body || "{}");
-    // ⚠️ il campo si chiama "secret" nel fetch dal form React
+    // Proviamo prima a leggere il segreto dal body (per le richieste POST)
     secretFromClient = body.secret || "";
   } catch (err) {
     console.error("Errore parsing body:", err);
-    return {
-      statusCode: 400,
-      body: JSON.stringify({ ok: false, error: "Bad request" }),
-    };
+    // non usciamo subito: proveremo a leggere l'header più sotto
+  }
+
+  // Se dal body non è arrivato nulla, proviamo a leggerlo dagli header
+  if (!secretFromClient) {
+    const headers = event.headers || {};
+    secretFromClient =
+      headers["x-admin-secret"] ||
+      headers["X-Admin-Secret"] ||
+      headers["x-admin-secret".toLowerCase()] ||
+      "";
   }
 
   const adminKey = process.env.ADMIN_DASHBOARD_KEY;
