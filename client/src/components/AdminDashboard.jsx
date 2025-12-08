@@ -186,7 +186,14 @@ export default function AdminDashboard() {
           nextSurveys = [];
         }
 
-        // Ultimi in alto
+        // Ordina per data (più recenti in alto) come fallback, nel caso il backend non lo faccia già
+        nextSurveys = [...nextSurveys].sort((a, b) => {
+          const da = new Date(a.createdAt || a.surveyCompletedAt || a.date || 0).getTime();
+          const db = new Date(b.createdAt || b.surveyCompletedAt || b.date || 0).getTime();
+          return db - da;
+        });
+
+        // Ultimi in alto (già ordinati sopra)
         setSurveys(nextSurveys);
 
         // Se la function fornisce già le statistiche le usiamo direttamente,
