@@ -1,7 +1,12 @@
-// netlify/functions/admin-dashboard.js
+const fs = require("fs/promises");
+const path = require("path");
+
+const DATA_DIR = path.join(__dirname, "../../server/data");
+const SURVEYS_FILE = path.join(DATA_DIR, "surveys.json");
+const STATS_FILE = path.join(DATA_DIR, "stats.json");
 
 exports.handler = async (event) => {
-  // Permettiamo solo POST dalla dashboard
+  // Permettiamo solo POST dal form
   if (event.httpMethod !== "POST") {
     return {
       statusCode: 405,
@@ -9,30 +14,33 @@ exports.handler = async (event) => {
     };
   }
 
-  // 🔐 Lettura e normalizzazione del codice segreto dal body
   let secretFromClient = "";
 
   try {
     const body = JSON.parse(event.body || "{}");
+
+    // Accettiamo diversi possibili nomi di campo, così siamo sicuri
     const { secret, adminSecret, password, code } = body;
 
-    // Accettiamo diversi possibili nomi di campo
     secretFromClient = secret || adminSecret || password || code || "";
   } catch (err) {
-    console.error("Errore parsing body admin-dashboard:", err);
+    console.error("Errore parsing body:", err);
     return {
       statusCode: 400,
       body: JSON.stringify({ ok: false, error: "Bad request" }),
     };
   }
 
-  const normalize = (s) => (s || "").toString().trim();
+  const adminKey = process.env.ADMIN_DASHBOARD_KEY || "";
 
-  const clientSecret = normalize(secretFromClient);
-  let serverSecret = normalize(process.env.ADMIN_DASHBOARD_KEY || "");
+  // Funzione di normalizzazione: niente null/undefined, niente spazi ai lati
+  const normalize = (s) => (s || "").trim();
 
-  if (!serverSecret) {
-    console.error("ADMIN_DASHBOARD_KEY mancante nell'ambiente Netlify!");
+  const normalizedClient = normalize(secretFromClient);
+  const normalizedServer = normalize(adminKey);
+
+  if (!normalizedServer) {
+    console.error("ADMIN_DASHBOARD_KEY non è impostata su Netlify!");
     return {
       statusCode: 500,
       body: JSON.stringify({
@@ -42,131 +50,64 @@ exports.handler = async (event) => {
     };
   }
 
-  if (clientSecret !== serverSecret) {
-    return {
-      statusCode: 401,
-      body: JSON.stringify({
-        ok: false,
-        error: "Invalid secret",
-      }),
-    };
-  }
+  if (normalizedClient === normalizedServer) {
+    try {
+      // Leggo i dati dei sondaggi
+      let surveys = [];
+      let stats = {
+        total: 0,
+        interested: 0,
+        notInterested: 0,
+        interestedPercent: 0,
+        notInterestedPercent: 0,
+      };
 
-  // 🔑 A questo punto il codice segreto è valido → leggiamo i dati da Klaviyo
-  try {
-    const apiKey = process.env.KLAVIYO_PRIVATE_KEY;
+      try {
+        const surveysRaw = await fs.readFile(SURVEYS_FILE, "utf8");
+        if (surveysRaw) {
+          surveys = JSON.parse(surveysRaw);
+        }
+      } catch (err) {
+        console.error("Errore lettura surveys.json:", err);
+      }
 
-    if (!apiKey) {
-      console.error(
-        "KLAVIYO_PRIVATE_KEY mancante nell'ambiente Netlify (admin-dashboard)"
-      );
+      try {
+        const statsRaw = await fs.readFile(STATS_FILE, "utf8");
+        if (statsRaw) {
+          stats = JSON.parse(statsRaw);
+        }
+      } catch (err) {
+        console.error("Errore lettura stats.json:", err);
+      }
+
+      return {
+        statusCode: 200,
+        body: JSON.stringify({
+          ok: true,
+          surveys,
+          stats,
+        }),
+      };
+    } catch (err) {
+      console.error("Errore lettura dati dashboard:", err);
       return {
         statusCode: 500,
         body: JSON.stringify({
           ok: false,
-          error: "Missing Klaviyo private key",
+          error: "Dashboard read error",
         }),
       };
     }
-
-    // Recupero tutti i profili che hanno completato il sondaggio
-    let surveys = [];
-    let url =
-      'https://a.klaviyo.com/api/profiles/?filter=equals(properties.survey_completed,true)&page[size]=100';
-
-    // Ciclo di paginazione base (max 5 pagine per sicurezza)
-    for (let i = 0; i < 5 && url; i++) {
-      const res = await fetch(url, {
-        method: "GET",
-        headers: {
-          Authorization: `Klaviyo-API-Key ${apiKey}`,
-          Accept: "application/json",
-          Revision: "2024-07-15",
-        },
-      });
-
-      const data = await res.json().catch(() => ({}));
-
-      if (!res.ok) {
-        console.error("Errore Klaviyo admin-dashboard:", res.status, data);
-        return {
-          statusCode: 502,
-          body: JSON.stringify({
-            ok: false,
-            error: "Klaviyo API error (admin-dashboard)",
-            status: res.status,
-          }),
-        };
-      }
-
-      const items = Array.isArray(data.data) ? data.data : [];
-
-      // Mappo i profili nel formato atteso dalla dashboard
-      for (const item of items) {
-        const attrs = item.attributes || {};
-        const props = attrs.properties || {};
-
-        const email = attrs.email || "";
-        const score = Number(props.survey_score ?? 0) || 0;
-        const level = props.survey_level || null;
-        const surveyCompletedAt = props.survey_completed_at || null;
-
-        const consent =
-          !!attrs.subscriptions &&
-          !!attrs.subscriptions.email &&
-          !!attrs.subscriptions.email.marketing &&
-          attrs.subscriptions.email.marketing.consent === "SUBSCRIBED";
-
-        const isInterested = score >= 5; // stessa logica alleggerita che usiamo nel resto
-
-        surveys.push({
-          email,
-          score,
-          level,
-          consent,
-          isInterested,
-          surveyCompletedAt,
-        });
-      }
-
-      // Gestione paginazione Klaviyo (link "next")
-      const links = data.links || {};
-      url = links.next || null;
-    }
-
-    // 📊 Calcolo statistiche aggregate
-    const total = surveys.length;
-    const interestedCount = surveys.filter((s) => s.isInterested).length;
-    const notInterestedCount = total - interestedCount;
-    const interestedPercent = total
-      ? Math.round((interestedCount / total) * 100)
-      : 0;
-    const notInterestedPercent = 100 - interestedPercent;
-
-    const stats = {
-      total,
-      interested: interestedCount,
-      notInterested: notInterestedCount,
-      interestedPercent,
-      notInterestedPercent,
-    };
-
-    return {
-      statusCode: 200,
-      body: JSON.stringify({
-        ok: true,
-        surveys,
-        stats,
-      }),
-    };
-  } catch (err) {
-    console.error("Errore generale admin-dashboard Klaviyo:", err);
-    return {
-      statusCode: 500,
-      body: JSON.stringify({
-        ok: false,
-        error: "Dashboard read error",
-      }),
-    };
   }
+
+  // Debug “soft”: nessun valore, solo lunghezze
+  return {
+    statusCode: 401,
+    body: JSON.stringify({
+      ok: false,
+      error: "Invalid secret",
+      clientLength: normalizedClient.length,
+      serverLength: normalizedServer.length,
+    }),
+  };
 };
