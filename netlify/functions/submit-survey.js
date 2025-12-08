@@ -589,6 +589,8 @@ if (!profileRes.ok) {
         level,
         consent: !!consent,
         isInterested,
+        surveyAnswers,
+        surveyCompletedAt,
       };
 
       // Mi assicuro che la cartella dati esista
