@@ -1,4 +1,12 @@
+
 // netlify/functions/submit-survey.js
+
+const fs = require("fs/promises");
+const path = require("path");
+
+const DATA_DIR = path.join(__dirname, "../../server/data");
+const SURVEYS_FILE = path.join(DATA_DIR, "surveys.json");
+const STATS_FILE = path.join(DATA_DIR, "stats.json");
 
 exports.handler = async (event, context) => {
   console.log("Request from:", event.httpMethod, event.path);
@@ -569,6 +577,63 @@ if (!profileRes.ok) {
       console.error("Errore durante l'invio dei dati alla dashboard:", dashErr);
       // Non blocchiamo l'utente se la dashboard fallisce, è solo logging interno
     }
+
+    // ---------- Salvataggio dati per la dashboard ----------
+    try {
+      const isInterested = score >= 5; // stessa logica alleggerita usata in index.js
+
+      const participant = {
+        email: normalizedEmail,
+        date: new Date().toISOString(),
+        score,
+        level,
+        consent: !!consent,
+        isInterested,
+      };
+
+      // Mi assicuro che la cartella dati esista
+      await fs.mkdir(DATA_DIR, { recursive: true });
+
+      // 1) Leggo l'elenco esistente (se c'è)
+      let surveys = [];
+      try {
+        const raw = await fs.readFile(SURVEYS_FILE, "utf8");
+        if (raw) {
+          surveys = JSON.parse(raw);
+        }
+      } catch (err) {
+        console.warn("surveys.json non trovato o non leggibile, creo nuovo file:", err.message);
+      }
+
+      // Aggiungo in testa il nuovo partecipante
+      surveys.unshift(participant);
+
+      // 2) Ricalcolo le statistiche
+      const total = surveys.length;
+      const interestedCount = surveys.filter((p) => p.isInterested).length;
+      const notInterestedCount = total - interestedCount;
+      const interestedPercent =
+        total > 0 ? Math.round((interestedCount / total) * 100) : 0;
+      const notInterestedPercent = 100 - interestedPercent;
+
+      const stats = {
+        total,
+        interested: interestedCount,
+        notInterested: notInterestedCount,
+        interestedPercent,
+        notInterestedPercent,
+      };
+
+      // 3) Salvo su disco
+      await fs.writeFile(SURVEYS_FILE, JSON.stringify(surveys, null, 2));
+      await fs.writeFile(STATS_FILE, JSON.stringify(stats, null, 2));
+
+      console.log("✅ Dati dashboard aggiornati (surveys.json / stats.json)");
+    } catch (err) {
+      console.error("Errore salvataggio dati dashboard:", err);
+      // Non blocchiamo l'utente se la dashboard fallisce, la survey resta comunque valida
+    }
+    // ---------- fine salvataggio dashboard ----------
 
     // ✅ Tutto ok
     return {
