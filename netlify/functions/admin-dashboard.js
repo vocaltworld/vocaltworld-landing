@@ -1,4 +1,12 @@
 exports.handler = async (event) => {
+  // Consenti solo richieste POST dalla dashboard
+  if (event.httpMethod !== "POST") {
+    return {
+      statusCode: 405,
+      body: JSON.stringify({ ok: false, error: "Method not allowed" }),
+    };
+  }
+
   let secretFromClient = "";
 
   try {
@@ -20,7 +28,12 @@ exports.handler = async (event) => {
       "";
   }
 
-  const adminKey = process.env.ADMIN_DASHBOARD_KEY;
+  // Normalizzo il segreto arrivato dal client (evito spazi / newline)
+  secretFromClient = String(secretFromClient || "").trim();
+
+  let adminKey = process.env.ADMIN_DASHBOARD_KEY;
+  // Normalizzo anche la chiave lato server
+  adminKey = String(adminKey || "").trim();
 
   // Debug soft: verifico solo che la env esista (NON stampo il valore)
   if (!adminKey) {
