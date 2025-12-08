@@ -1,31 +1,39 @@
 exports.handler = async (event) => {
-  // Consenti solo richieste POST dalla dashboard
-  if (event.httpMethod !== "POST") {
+  let secretFromClient = "";
+
+  // 1. Recupero il segreto in base al metodo HTTP
+  if (event.httpMethod === "POST") {
+    // Richiesta dal form (login)
+    try {
+      const body = JSON.parse(event.body || "{}");
+      secretFromClient = body.secret || "";
+    } catch (err) {
+      console.error("Errore parsing body POST:", err);
+      return {
+        statusCode: 400,
+        body: JSON.stringify({ ok: false, error: "Bad request" }),
+      };
+    }
+  } else if (event.httpMethod === "GET") {
+    // Richieste di caricamento dati che passano il segreto come query o header
+    const qs = event.queryStringParameters || {};
+    secretFromClient = qs.secret || "";
+
+    // Se non arriva in query, provo dagli header
+    if (!secretFromClient) {
+      const headers = event.headers || {};
+      secretFromClient =
+        headers["x-admin-secret"] ||
+        headers["X-Admin-Secret"] ||
+        headers["x-admin-secret".toLowerCase()] ||
+        "";
+    }
+  } else {
+    // Tutti gli altri metodi NON sono permessi
     return {
       statusCode: 405,
       body: JSON.stringify({ ok: false, error: "Method not allowed" }),
     };
-  }
-
-  let secretFromClient = "";
-
-  try {
-    const body = JSON.parse(event.body || "{}");
-    // Proviamo prima a leggere il segreto dal body (per le richieste POST)
-    secretFromClient = body.secret || "";
-  } catch (err) {
-    console.error("Errore parsing body:", err);
-    // non usciamo subito: proveremo a leggere l'header più sotto
-  }
-
-  // Se dal body non è arrivato nulla, proviamo a leggerlo dagli header
-  if (!secretFromClient) {
-    const headers = event.headers || {};
-    secretFromClient =
-      headers["x-admin-secret"] ||
-      headers["X-Admin-Secret"] ||
-      headers["x-admin-secret".toLowerCase()] ||
-      "";
   }
 
   // Normalizzo il segreto arrivato dal client (evito spazi / newline)
