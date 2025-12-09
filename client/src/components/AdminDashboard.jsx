@@ -84,7 +84,7 @@ export default function AdminDashboard() {
   });
 
   const lastInfo = getLastResponseInfo(surveys);
-  const selectedAnswers = selectedSurvey?.answers || {};
+  const answers = selectedSurvey?.answers || {};
 
   // 🧠 Logica di validazione prodotto in base alle statistiche
   const validation = useMemo(() => {
@@ -493,7 +493,7 @@ export default function AdminDashboard() {
               <div className="admin-detail-card">
                 <div className="admin-detail-label">Uso principale</div>
                 <div className="admin-detail-value">
-                  {selectedSurvey.mainUseCase || selectedAnswers.mainUseCase || "-"}
+                  {selectedSurvey.mainUseCase || answers.mainUseCase || "-"}
                 </div>
               </div>
 
@@ -502,7 +502,7 @@ export default function AdminDashboard() {
                   Quanto spesso ti capita di avere bisogno di tradurre?
                 </div>
                 <div className="admin-detail-value">
-                  {selectedSurvey.usageFrequency || selectedAnswers.usageFrequency || "-"}
+                  {selectedSurvey.usageFrequency || answers.usageFrequency || "-"}
                 </div>
               </div>
 
@@ -511,7 +511,7 @@ export default function AdminDashboard() {
                   Quanto ti interesserebbe un traduttore vocale offline?
                 </div>
                 <div className="admin-detail-value">
-                  {selectedSurvey.offlineInterest || selectedAnswers.offlineInterest || "-"}
+                  {selectedSurvey.offlineInterest || answers.offlineInterest || "-"}
                 </div>
               </div>
 
@@ -520,7 +520,7 @@ export default function AdminDashboard() {
                   Fascia di prezzo che consideri ok
                 </div>
                 <div className="admin-detail-value">
-                  {selectedSurvey.priceRange || selectedAnswers.priceRange || "-"}
+                  {selectedSurvey.priceRange || answers.priceRange || "-"}
                 </div>
               </div>
 
@@ -529,14 +529,14 @@ export default function AdminDashboard() {
                   Score interesse (algoritmo)
                 </div>
                 <div className="admin-detail-value">
-                  {selectedSurvey.interestScore ?? selectedSurvey.score ?? selectedAnswers.interestScore ?? "-"}
+                  {selectedSurvey.interestScore ?? selectedSurvey.score ?? answers.interestScore ?? "-"}
                 </div>
               </div>
 
               <div className="admin-detail-card">
                 <div className="admin-detail-label">Profilo calcolato</div>
                 <div className="admin-detail-value">
-                  {(selectedSurvey.isInterested ?? selectedSurvey.interested ?? selectedAnswers.isInterested)
+                  {(selectedSurvey.isInterested ?? selectedSurvey.interested ?? answers.isInterested)
                     ? "Interessato"
                     : "Non interessato"}
                 </div>
@@ -547,7 +547,7 @@ export default function AdminDashboard() {
                   Hai difficoltà a comunicare in lingua straniera?
                 </div>
                 <div className="admin-detail-value">
-                  {selectedSurvey.communicationDifficulty || selectedAnswers.communicationDifficulty || "-"}
+                  {selectedSurvey.communicationDifficulty || answers.communicationDifficulty || "-"}
                 </div>
               </div>
 
@@ -556,7 +556,7 @@ export default function AdminDashboard() {
                   Soluzione che usi oggi per tradurre
                 </div>
                 <div className="admin-detail-value">
-                  {selectedSurvey.currentSolution || selectedAnswers.currentSolution || "-"}
+                  {selectedSurvey.currentSolution || answers.currentSolution || "-"}
                 </div>
               </div>
 
@@ -565,15 +565,15 @@ export default function AdminDashboard() {
                   Interesse immediato per traduttore offline
                 </div>
                 <div className="admin-detail-value">
-                  {selectedSurvey.instantOfflineInterest || selectedAnswers.instantOfflineInterest || "-"}
+                  {selectedSurvey.instantOfflineInterest || answers.instantOfflineInterest || "-"}
                 </div>
               </div>
 
-              {(selectedSurvey.extraNote || selectedAnswers.extraNote) && (
+              {(selectedSurvey.extraNote || answers.extraNote) && (
                 <div className="admin-detail-card admin-detail-card-wide">
                   <div className="admin-detail-label">Note aggiuntive</div>
                   <div className="admin-detail-value">
-                    {selectedSurvey.extraNote || selectedAnswers.extraNote}
+                    {selectedSurvey.extraNote || answers.extraNote}
                   </div>
                 </div>
               )}
