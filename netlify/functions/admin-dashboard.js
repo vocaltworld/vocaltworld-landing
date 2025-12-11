@@ -1,91 +1,146 @@
-const fs = require("fs").promises;
-const path = require("path");
-
-const DATA_DIR = path.join(__dirname, "..", "..", "server", "data");
-const SURVEYS_FILE = path.join(DATA_DIR, "surveys.json");
-const STATS_FILE = path.join(DATA_DIR, "stats.json");
-
 // netlify/functions/admin-dashboard.js
+const fetch = (...args) => import("node-fetch").then(({ default: f }) => f(...args));
 
 exports.handler = async (event) => {
+  // permetti solo POST
+  if (event.httpMethod !== "POST") {
+    return {
+      statusCode: 405,
+      body: JSON.stringify({ ok: false, error: "Method not allowed" }),
+    };
+  }
+
+  let secretFromClient = "";
   try {
-    // 1️⃣ Solo POST
-    if (event.httpMethod !== "POST") {
-      return {
-        statusCode: 405,
-        body: JSON.stringify({ ok: false, error: "Method not allowed" }),
-      };
+    const body = JSON.parse(event.body || "{}");
+    secretFromClient = body.secret || "";
+  } catch (err) {
+    console.error("Errore parsing body:", err);
+    return {
+      statusCode: 400,
+      body: JSON.stringify({ ok: false, error: "Bad request" }),
+    };
+  }
+
+  const adminKey = process.env.ADMIN_DASHBOARD_KEY;
+  if (!adminKey) {
+    console.error("ADMIN_DASHBOARD_KEY non impostata su Netlify");
+    return {
+      statusCode: 500,
+      body: JSON.stringify({
+        ok: false,
+        error: "Server misconfigured (missing admin key)",
+      }),
+    };
+  }
+
+  if (secretFromClient !== adminKey) {
+    return {
+      statusCode: 401,
+      body: JSON.stringify({ ok: false, error: "Invalid secret" }),
+    };
+  }
+
+  // 🔑 Klaviyo
+  const klaviyoKey = process.env.KLAVIYO_PRIVATE_KEY;
+  const listId = process.env.KLAVIYO_LIST_ID;
+
+  if (!klaviyoKey || !listId) {
+    console.error("KLAVIYO_PRIVATE_KEY o KLAVIYO_LIST_ID mancanti");
+    return {
+      statusCode: 500,
+      body: JSON.stringify({
+        ok: false,
+        error: "Server misconfigured (missing Klaviyo env vars)",
+      }),
+    };
+  }
+
+  try {
+    // 🔎 prendiamo TUTTI i membri della lista da Klaviyo (API v2)
+    const url = `https://a.klaviyo.com/api/v2/list/${listId}/members/all?api_key=${klaviyoKey}`;
+    const res = await fetch(url);
+    if (!res.ok) {
+      const text = await res.text();
+      console.error("Errore Klaviyo:", res.status, text);
+      throw new Error("Errore nel recupero dati da Klaviyo");
     }
 
-    // 2️⃣ Leggo il body e il secret
-    let body = {};
-    try {
-      body = JSON.parse(event.body || "{}");
-    } catch (err) {
-      console.error("Errore parsing body admin:", err);
-      return {
-        statusCode: 400,
-        body: JSON.stringify({ ok: false, error: "Bad request" }),
-      };
-    }
+    const payload = await res.json();
+    const records = payload.records || [];
 
-    const secretFromClient = body.secret || "";
-    const adminKey = process.env.ADMIN_DASHBOARD_KEY;
+    // 🎯 trasformiamo i profili Klaviyo in "surveys" per la dashboard
+    const surveys = records
+      .filter((r) => r.properties && r.properties.survey_completed)
+      .map((r) => {
+        const props = r.properties || {};
 
-    if (!adminKey) {
-      console.error("ADMIN_DASHBOARD_KEY non configurata su Netlify");
-      return {
-        statusCode: 500,
-        body: JSON.stringify({
-          ok: false,
-          error: "Server misconfigured (missing admin key)",
-        }),
-      };
-    }
+        // survey_answers può essere stringa JSON o oggetto
+        let answers = {};
+        if (props.survey_answers) {
+          if (typeof props.survey_answers === "string") {
+            try {
+              answers = JSON.parse(props.survey_answers);
+            } catch (e) {
+              console.warn("Impossibile fare JSON.parse di survey_answers:", e);
+            }
+          } else if (typeof props.survey_answers === "object") {
+            answers = props.survey_answers;
+          }
+        }
 
-    if (secretFromClient !== adminKey) {
-      return {
-        statusCode: 401,
-        body: JSON.stringify({ ok: false, error: "Invalid secret" }),
-      };
-    }
+        const score = props.survey_score ?? null;
+        const level = props.survey_level || "";
+        const interested =
+          level.toLowerCase() === "speaker" ||
+          level.toLowerCase() === "interessato" ||
+          level.toLowerCase() === "molto interessato";
 
-    // 3️⃣ Leggo surveys.json e stats.json generati dalla Netlify Function submit-survey
-    let surveys = [];
-    let stats = {
-      total: 0,
-      interested: 0,
-      notInterested: 0,
-      interestedPercent: 0,
-      notInterestedPercent: 0,
+        return {
+          email: r.email,
+          createdAt: props.survey_completed_at || props.$last_event_time || null,
+          score,
+          level,
+          interested,
+          answers: {
+            usageFrequency: answers.usageFrequency || answers.usage_frequency,
+            mainUseCase: answers.mainUseCase || answers.main_use_case,
+            offlineInterest:
+              answers.offlineInterest || answers.offline_interest,
+            priceRange: answers.priceRange || answers.price_range,
+            communicationDifficulty:
+              answers.communicationDifficulty ||
+              answers.communication_difficulty,
+            currentSolution:
+              answers.currentSolution || answers.current_solution,
+            instantOfflineInterest:
+              answers.instantOfflineInterest ||
+              answers.instant_offline_interest,
+            extraNote: answers.extraNote || answers.extra_note,
+          },
+        };
+      });
+
+    // 📊 calcoliamo le stats
+    const total = surveys.length;
+    const interestedCount = surveys.filter((s) => s.interested).length;
+    const notInterestedCount = total - interestedCount;
+
+    const interestedPercent = total
+      ? Math.round((interestedCount / total) * 100)
+      : 0;
+    const notInterestedPercent = total
+      ? Math.round((notInterestedCount / total) * 100)
+      : 0;
+
+    const stats = {
+      total,
+      interested: interestedCount,
+      notInterested: notInterestedCount,
+      interestedPercent,
+      notInterestedPercent,
     };
 
-    try {
-      const surveysRaw = await fs.readFile(SURVEYS_FILE, "utf8");
-      if (surveysRaw) {
-        surveys = JSON.parse(surveysRaw || "[]");
-      }
-    } catch (err) {
-      console.warn("Impossibile leggere surveys.json:", err.message);
-    }
-
-    try {
-      const statsRaw = await fs.readFile(STATS_FILE, "utf8");
-      if (statsRaw) {
-        stats = JSON.parse(statsRaw || "{}");
-      }
-    } catch (err) {
-      console.warn("Impossibile leggere stats.json, uso valori di default:", err.message);
-    }
-
-    // Ordiniamo i risultati per data (più recenti in alto)
-    surveys.sort((a, b) => {
-      const da = new Date(a.createdAt || a.date || 0);
-      const db = new Date(b.createdAt || b.date || 0);
-      return db - da;
-    });
-
-    // 4️⃣ Risposta nel formato atteso dalla dashboard
     return {
       statusCode: 200,
       body: JSON.stringify({
@@ -95,10 +150,13 @@ exports.handler = async (event) => {
       }),
     };
   } catch (err) {
-    console.error("Errore generale admin-dashboard:", err);
+    console.error("Errore generico admin-dashboard:", err);
     return {
       statusCode: 500,
-      body: JSON.stringify({ ok: false, error: "Internal Server Error" }),
+      body: JSON.stringify({
+        ok: false,
+        error: "Internal Server Error",
+      }),
     };
   }
 };
