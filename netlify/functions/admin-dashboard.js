@@ -1,5 +1,4 @@
 // netlify/functions/admin-dashboard.js
-const fetch = (...args) => import("node-fetch").then(({ default: f }) => f(...args));
 
 exports.handler = async (event) => {
   // permetti solo POST
