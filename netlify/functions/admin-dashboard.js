@@ -68,58 +68,69 @@ exports.handler = async (event) => {
 
     const payload = await res.json();
     const records = payload.records || [];
+    console.log("Klaviyo payload records count:", records.length);
+
+    const completedRecords = records.filter(
+      (r) => r.properties && r.properties.survey_completed
+    );
+
+    console.log(
+      "Klaviyo completed survey records count:",
+      completedRecords.length
+    );
 
     // 🎯 trasformiamo i profili Klaviyo in "surveys" per la dashboard
-    const surveys = records
-      .filter((r) => r.properties && r.properties.survey_completed)
-      .map((r) => {
-        const props = r.properties || {};
+    const surveys = completedRecords.map((r) => {
+      const props = r.properties || {};
 
-        // survey_answers può essere stringa JSON o oggetto
-        let answers = {};
-        if (props.survey_answers) {
-          if (typeof props.survey_answers === "string") {
-            try {
-              answers = JSON.parse(props.survey_answers);
-            } catch (e) {
-              console.warn("Impossibile fare JSON.parse di survey_answers:", e);
-            }
-          } else if (typeof props.survey_answers === "object") {
-            answers = props.survey_answers;
+      // survey_answers può essere stringa JSON o oggetto
+      let answers = {};
+      if (props.survey_answers) {
+        if (typeof props.survey_answers === "string") {
+          try {
+            answers = JSON.parse(props.survey_answers);
+          } catch (e) {
+            console.warn(
+              "Impossibile fare JSON.parse di survey_answers:",
+              e
+            );
           }
+        } else if (typeof props.survey_answers === "object") {
+          answers = props.survey_answers;
         }
+      }
 
-        const score = props.survey_score ?? null;
-        const level = props.survey_level || "";
-        const interested =
-          level.toLowerCase() === "speaker" ||
-          level.toLowerCase() === "interessato" ||
-          level.toLowerCase() === "molto interessato";
+      const score = props.survey_score ?? null;
+      const level = props.survey_level || "";
+      const interested =
+        level.toLowerCase() === "speaker" ||
+        level.toLowerCase() === "interessato" ||
+        level.toLowerCase() === "molto interessato";
 
-        return {
-          email: r.email,
-          createdAt: props.survey_completed_at || props.$last_event_time || null,
-          score,
-          level,
-          interested,
-          answers: {
-            usageFrequency: answers.usageFrequency || answers.usage_frequency,
-            mainUseCase: answers.mainUseCase || answers.main_use_case,
-            offlineInterest:
-              answers.offlineInterest || answers.offline_interest,
-            priceRange: answers.priceRange || answers.price_range,
-            communicationDifficulty:
-              answers.communicationDifficulty ||
-              answers.communication_difficulty,
-            currentSolution:
-              answers.currentSolution || answers.current_solution,
-            instantOfflineInterest:
-              answers.instantOfflineInterest ||
-              answers.instant_offline_interest,
-            extraNote: answers.extraNote || answers.extra_note,
-          },
-        };
-      });
+      return {
+        email: r.email,
+        createdAt: props.survey_completed_at || props.$last_event_time || null,
+        score,
+        level,
+        interested,
+        answers: {
+          usageFrequency: answers.usageFrequency || answers.usage_frequency,
+          mainUseCase: answers.mainUseCase || answers.main_use_case,
+          offlineInterest:
+            answers.offlineInterest || answers.offline_interest,
+          priceRange: answers.priceRange || answers.price_range,
+          communicationDifficulty:
+            answers.communicationDifficulty ||
+            answers.communication_difficulty,
+          currentSolution:
+            answers.currentSolution || answers.current_solution,
+          instantOfflineInterest:
+            answers.instantOfflineInterest ||
+            answers.instant_offline_interest,
+          extraNote: answers.extraNote || answers.extra_note,
+        },
+      };
+    });
 
     // 📊 calcoliamo le stats
     const total = surveys.length;
