@@ -4,5 +4,8 @@
   "scripts": {
     "dev": "cd client && npm run dev",
     "build": "cd client && npm run build"
+  },
+  "dependencies": {
+    "node-fetch": "^2.7.0"
   }
 }
