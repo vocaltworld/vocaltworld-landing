@@ -578,61 +578,71 @@ if (!profileRes.ok) {
       // Non blocchiamo l'utente se la dashboard fallisce, è solo logging interno
     }
 
-// ---------- Salvataggio dati per la dashboard ----------
-try {
-  const isInterested = score >= 5;
+    // ---------- Salvataggio dati per la dashboard ----------
+    try {
+      const interested = score >= 5; // stesso criterio usato nel resto della logica
 
-  const participant = {
-    email: normalizedEmail,
-    date: new Date().toISOString(),
-    score,
-    level,
-    consent: !!consent,
-    isInterested,
-    surveyAnswers,        // <-- AGGIUNTO
-    surveyCompletedAt,    // <-- AGGIUNTO
-  };
+      const newSurvey = {
+        email: normalizedEmail,
+        createdAt: new Date().toISOString(),
+        score,
+        interested, // true/false
+        answers: {
+          usageFrequency,
+          mainUseCase,
+          offlineInterest,
+          priceRange,
+          communicationDifficulty,
+          currentSolution,
+          instantOfflineInterest,
+          extraNote,
+        },
+      };
 
-  // Creo cartella se non esiste
-  await fs.mkdir(DATA_DIR, { recursive: true });
+      // Mi assicuro che la cartella esista
+      await fs.mkdir(DATA_DIR, { recursive: true });
 
-  // Leggo surveys.json
-  let surveys = [];
-  try {
-    const raw = await fs.readFile(SURVEYS_FILE, "utf8");
-    if (raw) surveys = JSON.parse(raw);
-  } catch (err) {
-    console.warn("surveys.json non trovato, ne creo uno nuovo:", err.message);
-  }
+      // Leggo eventuali sondaggi precedenti
+      let surveys = [];
+      try {
+        const raw = await fs.readFile(SURVEYS_FILE, "utf8");
+        if (raw) {
+          surveys = JSON.parse(raw);
+        }
+      } catch (readErr) {
+        console.warn("surveys.json non trovato o non leggibile, ne creo uno nuovo:", readErr.message);
+      }
 
-  // Aggiungo in testa il nuovo partecipante
-  surveys.unshift(participant);
+      // Aggiungo il nuovo sondaggio in coda
+      surveys.push(newSurvey);
 
-  // Ricalcolo statistiche
-  const total = surveys.length;
-  const interestedCount = surveys.filter((p) => p.isInterested).length;
-  const notInterestedCount = total - interestedCount;
-  const interestedPercent =
-    total > 0 ? Math.round((interestedCount / total) * 100) : 0;
-  const notInterestedPercent = 100 - interestedPercent;
+      // calcoli stats (total, interestedCount, ecc...)
+      const total = surveys.length;
+      const interestedCount = surveys.filter((s) => s.interested).length;
+      const notInterestedCount = total - interestedCount;
 
-  const stats = {
-    total,
-    interested: interestedCount,
-    notInterested: notInterestedCount,
-    interestedPercent,
-    notInterestedPercent,
-  };
+      const interestedPercent =
+        total > 0 ? Math.round((interestedCount / total) * 100) : 0;
+      const notInterestedPercent = 100 - interestedPercent;
 
-  // Salvo su disco
-  await fs.writeFile(SURVEYS_FILE, JSON.stringify(surveys, null, 2));
-  await fs.writeFile(STATS_FILE, JSON.stringify(stats, null, 2));
+      const stats = {
+        total,
+        interested: interestedCount,
+        notInterested: notInterestedCount,
+        interestedPercent,
+        notInterestedPercent,
+      };
 
-  console.log("✅ Dati dashboard aggiornati con risposte (surveys.json / stats.json)");
-} catch (err) {
-  console.error("Errore salvataggio dati dashboard:", err);
-}
-// ---------- fine salvataggio dashboard ----------
+      // salviamo su disco
+      await fs.writeFile(SURVEYS_FILE, JSON.stringify(surveys, null, 2));
+      await fs.writeFile(STATS_FILE, JSON.stringify(stats, null, 2));
+
+      console.log("✅ Dati dashboard salvati (surveys.json / stats.json)");
+    } catch (saveErr) {
+      console.error("Errore salvataggio dati dashboard:", saveErr);
+      // Non blocchiamo la risposta all'utente se fallisce il log interno
+    }
+    // ---------- fine salvataggio dashboard ----------
     // ✅ Tutto ok
     return {
       statusCode: 200,

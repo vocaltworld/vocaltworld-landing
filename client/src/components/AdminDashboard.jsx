@@ -67,9 +67,9 @@ function getLastResponseInfo(surveys) {
 export default function AdminDashboard() {
   const [stats, setStats] = useState(null);
   const [surveys, setSurveys] = useState([]);
+  const [selectedSurvey, setSelectedSurvey] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
-  const [selectedSurvey, setSelectedSurvey] = useState(null);
   const [lastRowId, setLastRowId] = useState(null);
 
   // 🔐 Stato per la chiave admin (salvata in localStorage)
@@ -152,36 +152,17 @@ export default function AdminDashboard() {
         // Chiamiamo la Netlify Function che espone i dati della dashboard
         const res = await fetch("/.netlify/functions/admin-dashboard", {
           method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            "x-admin-key": adminKey || "",
-          },
+          headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
             secret: adminKey || "",
           }),
         });
 
-        if (res.status === 401) {
-          // chiave non valida: torno alla schermata di login
-          setError("Codice segreto non valido.");
-          setIsAuth(false);
-          if (typeof window !== "undefined") {
-            window.localStorage.removeItem("vt_admin_key");
-          }
-          setLoading(false);
-          return;
-        }
-
-        if (!res.ok) {
-          throw new Error(
-            "Errore nel caricamento dei dati (" + res.status + ")"
-          );
-        }
-
         const data = await res.json();
+        if (!data.ok) {
+          throw new Error(data.error || "Errore caricamento dashboard");
+        }
 
-        // data.stats e data.surveys sono i formati attesi;
-        // in fallback gestiamo anche data.responses se la function li chiama così.
         let nextSurveys = data.surveys || data.responses || [];
         if (!Array.isArray(nextSurveys)) {
           nextSurveys = [];
@@ -194,11 +175,8 @@ export default function AdminDashboard() {
           return db - da;
         });
 
-        // Ultimi in alto (già ordinati sopra)
         setSurveys(nextSurveys);
 
-        // Se la function fornisce già le statistiche le usiamo direttamente,
-        // altrimenti proviamo a calcolarle in modo compatibile con la UI esistente.
         if (data.stats) {
           setStats(data.stats);
         } else {
@@ -490,93 +468,93 @@ export default function AdminDashboard() {
             </p>
 
             <div className="admin-detail-grid">
-              <div className="admin-detail-card">
-                <div className="admin-detail-label">Uso principale</div>
+            <div className="admin-detail-card">
+              <div className="admin-detail-label">Uso principale</div>
+              <div className="admin-detail-value">
+                {answers.mainUseCase || "-"}
+              </div>
+            </div>
+
+            <div className="admin-detail-card">
+              <div className="admin-detail-label">
+                Quanto spesso ti capita di avere bisogno di tradurre?
+              </div>
+              <div className="admin-detail-value">
+                {answers.usageFrequency || "-"}
+              </div>
+            </div>
+
+            <div className="admin-detail-card">
+              <div className="admin-detail-label">
+                Quanto ti interesserebbe un traduttore vocale offline?
+              </div>
+              <div className="admin-detail-value">
+                {answers.offlineInterest || "-"}
+              </div>
+            </div>
+
+            <div className="admin-detail-card">
+              <div className="admin-detail-label">
+                Fascia di prezzo che consideri ok
+              </div>
+              <div className="admin-detail-value">
+                {answers.priceRange || "-"}
+              </div>
+            </div>
+
+            <div className="admin-detail-card">
+              <div className="admin-detail-label">
+                Score interesse (algoritmo)
+              </div>
+              <div className="admin-detail-value">
+                {selectedSurvey.score ?? answers.interestScore ?? "-"}
+              </div>
+            </div>
+
+            <div className="admin-detail-card">
+              <div className="admin-detail-label">Profilo calcolato</div>
+              <div className="admin-detail-value">
+                {(selectedSurvey.isInterested ?? selectedSurvey.interested)
+                  ? "Interessato"
+                  : "Non interessato"}
+              </div>
+            </div>
+
+            <div className="admin-detail-card">
+              <div className="admin-detail-label">
+                Hai difficoltà a comunicare in lingua straniera?
+              </div>
+              <div className="admin-detail-value">
+                {answers.communicationDifficulty || "-"}
+              </div>
+            </div>
+
+            <div className="admin-detail-card">
+              <div className="admin-detail-label">
+                Soluzione che usi oggi per tradurre
+              </div>
+              <div className="admin-detail-value">
+                {answers.currentSolution || "-"}
+              </div>
+            </div>
+
+            <div className="admin-detail-card">
+              <div className="admin-detail-label">
+                Interesse immediato per traduttore offline
+              </div>
+              <div className="admin-detail-value">
+                {answers.instantOfflineInterest || "-"}
+              </div>
+            </div>
+
+            {answers.extraNote && (
+              <div className="admin-detail-card admin-detail-card-wide">
+                <div className="admin-detail-label">Note aggiuntive</div>
                 <div className="admin-detail-value">
-                  {selectedSurvey.mainUseCase || answers.mainUseCase || "-"}
+                  {answers.extraNote}
                 </div>
               </div>
-
-              <div className="admin-detail-card">
-                <div className="admin-detail-label">
-                  Quanto spesso ti capita di avere bisogno di tradurre?
-                </div>
-                <div className="admin-detail-value">
-                  {selectedSurvey.usageFrequency || answers.usageFrequency || "-"}
-                </div>
-              </div>
-
-              <div className="admin-detail-card">
-                <div className="admin-detail-label">
-                  Quanto ti interesserebbe un traduttore vocale offline?
-                </div>
-                <div className="admin-detail-value">
-                  {selectedSurvey.offlineInterest || answers.offlineInterest || "-"}
-                </div>
-              </div>
-
-              <div className="admin-detail-card">
-                <div className="admin-detail-label">
-                  Fascia di prezzo che consideri ok
-                </div>
-                <div className="admin-detail-value">
-                  {selectedSurvey.priceRange || answers.priceRange || "-"}
-                </div>
-              </div>
-
-              <div className="admin-detail-card">
-                <div className="admin-detail-label">
-                  Score interesse (algoritmo)
-                </div>
-                <div className="admin-detail-value">
-                  {selectedSurvey.interestScore ?? selectedSurvey.score ?? answers.interestScore ?? "-"}
-                </div>
-              </div>
-
-              <div className="admin-detail-card">
-                <div className="admin-detail-label">Profilo calcolato</div>
-                <div className="admin-detail-value">
-                  {(selectedSurvey.isInterested ?? selectedSurvey.interested ?? answers.isInterested)
-                    ? "Interessato"
-                    : "Non interessato"}
-                </div>
-              </div>
-
-              <div className="admin-detail-card">
-                <div className="admin-detail-label">
-                  Hai difficoltà a comunicare in lingua straniera?
-                </div>
-                <div className="admin-detail-value">
-                  {selectedSurvey.communicationDifficulty || answers.communicationDifficulty || "-"}
-                </div>
-              </div>
-
-              <div className="admin-detail-card">
-                <div className="admin-detail-label">
-                  Soluzione che usi oggi per tradurre
-                </div>
-                <div className="admin-detail-value">
-                  {selectedSurvey.currentSolution || answers.currentSolution || "-"}
-                </div>
-              </div>
-
-              <div className="admin-detail-card">
-                <div className="admin-detail-label">
-                  Interesse immediato per traduttore offline
-                </div>
-                <div className="admin-detail-value">
-                  {selectedSurvey.instantOfflineInterest || answers.instantOfflineInterest || "-"}
-                </div>
-              </div>
-
-              {(selectedSurvey.extraNote || answers.extraNote) && (
-                <div className="admin-detail-card admin-detail-card-wide">
-                  <div className="admin-detail-label">Note aggiuntive</div>
-                  <div className="admin-detail-value">
-                    {selectedSurvey.extraNote || answers.extraNote}
-                  </div>
-                </div>
-              )}
+            )}
             </div>
           </div>
         )}
