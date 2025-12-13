@@ -74,12 +74,25 @@ function pick(obj, key, fallback = undefined) {
  * - molte risposte stanno in raw.answers.survey_answers
  * - score sta spesso in raw.answers.survey_score
  * - unifica campi e calcola Interested = score >= 6
- */function getEmailSubscribed(raw) {
-  // Klaviyo può esportare in forme diverse: proviamo le più comuni
+ */
+function getEmailSubscribed(raw) {
+  // ✅ Priorità 1: consenso esplicito Klaviyo (spesso arriva in raw.answers.$consent)
+  const rawAnswers = raw?.answers && typeof raw.answers === "object" ? raw.answers : {};
+  const consentArr =
+    (Array.isArray(raw?.$consent) ? raw.$consent : null) ??
+    (Array.isArray(rawAnswers?.$consent) ? rawAnswers.$consent : null) ??
+    (Array.isArray(rawAnswers?.consent) ? rawAnswers.consent : null);
+
+  if (Array.isArray(consentArr)) {
+    // Se include "email" consideriamo l’utente iscritto/consenziente alle email
+    if (consentArr.map((x) => String(x).toLowerCase()).includes("email")) return true;
+  }
+
+  // Priorità 2: stato subscription (alcuni export lo mettono qui)
   const status1 = raw?.subscriptions?.email?.marketing?.status; // "SUBSCRIBED"
-  const status2 = raw?.subscriptions?.email?.status;            // alternativa
-  const status3 = raw?.email_status;                            // alternativa custom
-  const status4 = raw?.emailSubscribed;                         // boolean custom
+  const status2 = raw?.subscriptions?.email?.status; // alternativa
+  const status3 = raw?.email_status; // alternativa custom
+  const status4 = raw?.emailSubscribed; // boolean custom
 
   const status = (status1 || status2 || status3 || "").toString().toUpperCase();
 
@@ -90,23 +103,19 @@ function pick(obj, key, fallback = undefined) {
 }
 function normalizeSurvey(raw) {
   // 1) blocchi possibili di "answers"
-    const hasSurvey =
-    raw?.survey_completed === true ||
-    !!raw?.survey_completed ||
-    (answers && Object.keys(answers).length > 0) ||
-    typeof rawScore === "number" ||
-    typeof rawInterestScore === "number";
-
-  const isEmailSubscribed = getEmailSubscribed(raw);
   const rawAnswers = raw?.answers && typeof raw.answers === "object" ? raw.answers : {};
+
   const surveyAnswers =
     (rawAnswers?.survey_answers && typeof rawAnswers.survey_answers === "object" ? rawAnswers.survey_answers : null) ||
     (rawAnswers?.surveyAnswers && typeof rawAnswers.surveyAnswers === "object" ? rawAnswers.surveyAnswers : null) ||
     (raw?.survey_answers && typeof raw.survey_answers === "object" ? raw.survey_answers : null) ||
     {};
 
-  // 2) answers "finali" (solo risposte vere), ma ci teniamo anche rawAnswers per score/level
+  // 2) answers "finali" (solo risposte vere)
   const answers = { ...surveyAnswers };
+
+  // Stato iscrizione email (Klaviyo consent/subscription)
+  const isEmailSubscribed = getEmailSubscribed(raw);
 
   // 3) email + date coerenti
   const email =
@@ -188,6 +197,14 @@ function normalizeSurvey(raw) {
     instantOfflineInterest:
       pick(answers, "instantOfflineInterest", pick(answers, "Instant Offline Interest", pick(rawAnswers, "instantOfflineInterest"))),
   };
+
+  // 8) hasSurvey: solo dopo che answers/rawScore sono disponibili
+  const hasSurvey =
+    raw?.survey_completed === true ||
+    !!raw?.survey_completed ||
+    (answers && Object.keys(answers).length > 0) ||
+    typeof rawScore === "number" ||
+    typeof rawInterestScore === "number";
 
   return {
     ...raw,
