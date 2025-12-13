@@ -401,6 +401,8 @@ textarea:focus {
 
 .footer-secondary {
   margin-top: 4px;
+}
+
 .privacy-checkbox {
   display: flex;
   align-items: flex-start;
@@ -412,7 +414,8 @@ textarea:focus {
 .privacy-checkbox input[type="checkbox"] {
   margin-top: 3px;
 }
-}.success-screen {
+
+.success-screen {
   max-width: 600px;
   margin: 0 auto 60px;
   padding: 32px 20px 40px;
@@ -759,7 +762,7 @@ textarea:focus {
 
 .admin-table-header {
   display: grid;
-  grid-template-columns: 3fr 2fr 1fr 1.4fr;
+  grid-template-columns: 2.6fr 1.6fr 0.6fr 1fr 1.2fr;
   padding: 12px 18px;
   font-size: 12px;
   text-transform: uppercase;
@@ -782,7 +785,7 @@ textarea:focus {
 
 .admin-row {
   display: grid;
-  grid-template-columns: 3fr 2fr 1fr 1.4fr;
+  grid-template-columns: 2.6fr 1.6fr 0.6fr 1fr 1.2fr;
   align-items: center;
   width: 100%;
   padding: 12px 18px;
@@ -855,6 +858,34 @@ textarea:focus {
   color: #ff453a;
   border-color: rgba(255, 69, 58, 0.7);
   box-shadow: 0 0 12px rgba(255, 69, 58, 0.45);
+}
+
+/* Badge stato iscrizione (solo sondaggio vs sondaggio + iscrizione) */
+.admin-badge {
+  display: inline-flex;
+  align-items: center;
+  width: fit-content;
+  padding: 4px 10px;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 600;
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  opacity: 0.95;
+  white-space: nowrap;
+}
+
+.admin-badge-subscribed {
+  background: rgba(46, 204, 113, 0.12);
+  border-color: rgba(46, 204, 113, 0.35);
+  color: #bbf7d0;
+  box-shadow: 0 0 12px rgba(46, 204, 113, 0.25);
+}
+
+.admin-badge-survey {
+  background: rgba(52, 152, 219, 0.12);
+  border-color: rgba(52, 152, 219, 0.35);
+  color: #cfe9ff;
+  box-shadow: 0 0 12px rgba(52, 152, 219, 0.18);
 }
 
 /* riga che hai appena visualizzato (lampeggio) */
