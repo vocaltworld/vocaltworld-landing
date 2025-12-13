@@ -1,9 +1,10 @@
 [build]
   base = "client"
   publish = "dist"
+  command = "npm run build"
 
 [functions]
-  directory = "server/netlify/functions"
+  directory = "../server/netlify/functions"
 
 [dev]
   command = "npm run dev"
