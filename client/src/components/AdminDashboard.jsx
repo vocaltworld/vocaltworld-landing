@@ -1,4 +1,4 @@
-import React, { useEffect, useState, useRef, useMemo } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 
 function formatDate(iso) {
   if (!iso) return "-";
@@ -11,6 +11,12 @@ function formatDate(iso) {
     minute: "2-digit",
     second: "2-digit",
   });
+}
+
+function parseNumber(v) {
+  if (typeof v === "number") return v;
+  if (typeof v === "string" && v.trim() !== "" && !Number.isNaN(Number(v))) return Number(v);
+  return null;
 }
 
 function getLastResponseInfo(surveys) {
@@ -59,44 +65,87 @@ function getLastResponseInfo(surveys) {
   return { label, isFresh };
 }
 
-/**
- * Normalizza i dati provenienti dal backend in modo coerente.
- * - Risolve il bug tipico: interestScore = 0 ma score = 5 (o >0)
- * - Unifica i campi: isInterested / interested
- * - Unifica email/date e porta su top-level anche answers
- */
-function normalizeSurvey(raw) {
-  const answers = raw?.answers && typeof raw.answers === "object" ? raw.answers : {};
+function pick(obj, key, fallback = undefined) {
+  return obj && Object.prototype.hasOwnProperty.call(obj, key) ? obj[key] : fallback;
+}
 
+/**
+ * 🔥 NORMALIZZAZIONE CORRETTA PER IL TUO BACKEND:
+ * - molte risposte stanno in raw.answers.survey_answers
+ * - score sta spesso in raw.answers.survey_score
+ * - unifica campi e calcola Interested = score >= 6
+ */function getEmailSubscribed(raw) {
+  // Klaviyo può esportare in forme diverse: proviamo le più comuni
+  const status1 = raw?.subscriptions?.email?.marketing?.status; // "SUBSCRIBED"
+  const status2 = raw?.subscriptions?.email?.status;            // alternativa
+  const status3 = raw?.email_status;                            // alternativa custom
+  const status4 = raw?.emailSubscribed;                         // boolean custom
+
+  const status = (status1 || status2 || status3 || "").toString().toUpperCase();
+
+  if (typeof status4 === "boolean") return status4;
+  if (status === "SUBSCRIBED") return true;
+
+  return false;
+}
+function normalizeSurvey(raw) {
+  // 1) blocchi possibili di "answers"
+    const hasSurvey =
+    raw?.survey_completed === true ||
+    !!raw?.survey_completed ||
+    (answers && Object.keys(answers).length > 0) ||
+    typeof rawScore === "number" ||
+    typeof rawInterestScore === "number";
+
+  const isEmailSubscribed = getEmailSubscribed(raw);
+  const rawAnswers = raw?.answers && typeof raw.answers === "object" ? raw.answers : {};
+  const surveyAnswers =
+    (rawAnswers?.survey_answers && typeof rawAnswers.survey_answers === "object" ? rawAnswers.survey_answers : null) ||
+    (rawAnswers?.surveyAnswers && typeof rawAnswers.surveyAnswers === "object" ? rawAnswers.surveyAnswers : null) ||
+    (raw?.survey_answers && typeof raw.survey_answers === "object" ? raw.survey_answers : null) ||
+    {};
+
+  // 2) answers "finali" (solo risposte vere), ma ci teniamo anche rawAnswers per score/level
+  const answers = { ...surveyAnswers };
+
+  // 3) email + date coerenti
   const email =
     raw?.email ??
-    answers?.email ??
+    rawAnswers?.email ??
+    surveyAnswers?.email ??
     raw?.properties?.email ??
     raw?.profile?.email ??
     "-";
 
-  const createdAt = raw?.createdAt ?? raw?.surveyCompletedAt ?? raw?.date ?? answers?.createdAt ?? answers?.surveyCompletedAt ?? null;
+  const createdAt =
+    raw?.createdAt ??
+    raw?.surveyCompletedAt ??
+    raw?.date ??
+    rawAnswers?.createdAt ??
+    rawAnswers?.surveyCompletedAt ??
+    rawAnswers?.timestamp ??
+    null;
 
-  // score grezzo da varie sorgenti possibili
+  // 4) score: prima survey_score, poi score/interestScore vari
   const rawScore =
-    (typeof raw?.score === "number" ? raw.score : null) ??
-    (typeof answers?.score === "number" ? answers.score : null) ??
-    (typeof raw?.interestScore === "number" ? raw.interestScore : null) ??
-    (typeof answers?.interestScore === "number" ? answers.interestScore : null);
+    parseNumber(rawAnswers?.survey_score) ??
+    parseNumber(rawAnswers?.score) ??
+    parseNumber(raw?.score) ??
+    parseNumber(surveyAnswers?.score) ??
+    parseNumber(rawAnswers?.interestScore) ??
+    parseNumber(raw?.interestScore) ??
+    parseNumber(surveyAnswers?.interestScore);
 
   const rawInterestScore =
-    (typeof raw?.interestScore === "number" ? raw.interestScore : null) ??
-    (typeof answers?.interestScore === "number" ? answers.interestScore : null);
+    parseNumber(rawAnswers?.interestScore) ??
+    parseNumber(raw?.interestScore) ??
+    parseNumber(surveyAnswers?.interestScore);
 
-  // ✅ Fix mismatch:
-  // - se interestScore è null/undefined -> usa score
-  // - se interestScore è 0 MA score è >0 -> usa score (caso “bug”)
+  // 5) mismatch fix: interestScore 0 ma score > 0
   let normalizedInterestScore = null;
   if (typeof rawInterestScore === "number") {
-    if (rawInterestScore === 0 && typeof raw?.score === "number" && raw.score > 0) {
-      normalizedInterestScore = raw.score;
-    } else if (rawInterestScore === 0 && typeof answers?.score === "number" && answers.score > 0) {
-      normalizedInterestScore = answers.score;
+    if (rawInterestScore === 0 && typeof rawScore === "number" && rawScore > 0) {
+      normalizedInterestScore = rawScore;
     } else {
       normalizedInterestScore = rawInterestScore;
     }
@@ -104,30 +153,60 @@ function normalizeSurvey(raw) {
     normalizedInterestScore = rawScore;
   }
 
-  // isInterested coerente
+  // 6) isInterested: proprietà se esiste, altrimenti score >= 6
   const rawIsInterested =
     (typeof raw?.isInterested === "boolean" ? raw.isInterested : null) ??
     (typeof raw?.interested === "boolean" ? raw.interested : null) ??
-    (typeof answers?.isInterested === "boolean" ? answers.isInterested : null) ??
-    (typeof answers?.interested === "boolean" ? answers.interested : null);
+    (typeof rawAnswers?.isInterested === "boolean" ? rawAnswers.isInterested : null) ??
+    (typeof rawAnswers?.interested === "boolean" ? rawAnswers.interested : null) ??
+    (typeof surveyAnswers?.isInterested === "boolean" ? surveyAnswers.isInterested : null) ??
+    (typeof surveyAnswers?.interested === "boolean" ? surveyAnswers.interested : null);
 
-  // Se non arriva dal backend, lo calcoliamo
   const computedIsInterested =
     typeof normalizedInterestScore === "number" ? normalizedInterestScore >= 6 : false;
 
   const normalizedIsInterested =
     typeof rawIsInterested === "boolean" ? rawIsInterested : computedIsInterested;
 
+  // 7) mappatura chiavi “comuni” (se arrivano con nomi diversi)
+  // (Qui manteniamo anche compatibilità con eventuali profili vecchi)
+  const mapped = {
+    usageFrequency:
+      pick(answers, "usageFrequency", pick(answers, "Usage Frequency", pick(rawAnswers, "usageFrequency"))),
+    offlineInterest:
+      pick(answers, "offlineInterest", pick(answers, "Offline Interest", pick(rawAnswers, "offlineInterest"))),
+    mainUseCase:
+      pick(answers, "mainUseCase", pick(answers, "Main Use Case", pick(rawAnswers, "mainUseCase"))),
+    priceRange:
+      pick(answers, "priceRange", pick(answers, "Price Range", pick(rawAnswers, "priceRange"))),
+    extraNote:
+      pick(answers, "extraNote", pick(answers, "Extra Note", pick(rawAnswers, "extraNote"))),
+    communicationDifficulty:
+      pick(answers, "communicationDifficulty", pick(answers, "Communication Difficulty", pick(rawAnswers, "communicationDifficulty"))),
+    currentSolution:
+      pick(answers, "currentSolution", pick(answers, "Current Solution", pick(rawAnswers, "currentSolution"))),
+    instantOfflineInterest:
+      pick(answers, "instantOfflineInterest", pick(answers, "Instant Offline Interest", pick(rawAnswers, "instantOfflineInterest"))),
+  };
+
   return {
     ...raw,
+    // risposte vere (survey_answers)
     answers,
+    // campi comodi top-level per UI
+    ...mapped,
+
     email,
     createdAt,
-    // manteniamo anche i grezzi per debug in UI
-    _rawScore: typeof raw?.score === "number" ? raw.score : (typeof answers?.score === "number" ? answers.score : null),
-    _rawInterestScore: typeof raw?.interestScore === "number" ? raw.interestScore : (typeof answers?.interestScore === "number" ? answers.interestScore : null),
+    surveyCompletedAt: raw?.surveyCompletedAt ?? createdAt,
+
+    _rawScore: rawScore,
+    _rawInterestScore: rawInterestScore,
+
     normalizedInterestScore,
     normalizedIsInterested,
+    hasSurvey,
+    isEmailSubscribed,
   };
 }
 
@@ -220,17 +299,13 @@ export default function AdminDashboard() {
             "Content-Type": "application/json",
             "x-admin-key": adminKey || "",
           },
-          body: JSON.stringify({
-            secret: adminKey || "",
-          }),
+          body: JSON.stringify({ secret: adminKey || "" }),
         });
 
         if (res.status === 401) {
           setError("Codice segreto non valido.");
           setIsAuth(false);
-          if (typeof window !== "undefined") {
-            window.localStorage.removeItem("vt_admin_key");
-          }
+          if (typeof window !== "undefined") window.localStorage.removeItem("vt_admin_key");
           setLoading(false);
           return;
         }
@@ -244,10 +319,8 @@ export default function AdminDashboard() {
         let nextSurveys = data.surveys || data.responses || [];
         if (!Array.isArray(nextSurveys)) nextSurveys = [];
 
-        // ✅ Normalizzazione robusta (fix mismatch score/interestScore)
         nextSurveys = nextSurveys.map(normalizeSurvey);
 
-        // Ordina per data (più recenti in alto)
         nextSurveys = [...nextSurveys].sort((a, b) => {
           const da = new Date(a.createdAt || a.surveyCompletedAt || a.date || 0).getTime();
           const db = new Date(b.createdAt || b.surveyCompletedAt || b.date || 0).getTime();
@@ -256,8 +329,6 @@ export default function AdminDashboard() {
 
         setSurveys(nextSurveys);
 
-        // Stats: usa quelle backend SOLO se sembrano coerenti,
-        // altrimenti calcola qui su dati normalizzati.
         const total = nextSurveys.length;
         const interestedCount = nextSurveys.filter((s) => !!s.normalizedIsInterested).length;
         const notInterestedCount = total - interestedCount;
@@ -265,39 +336,15 @@ export default function AdminDashboard() {
         const interestedPercent = total ? Math.round((interestedCount / total) * 100) : 0;
         const notInterestedPercent = total ? Math.round((notInterestedCount / total) * 100) : 0;
 
-        if (data.stats && typeof data.stats.total === "number") {
-          // Se ti va, puoi commentare questa parte e usare sempre stats calcolate localmente.
-          // Io lascio questa regola “safe”: se stats backend non matchano, uso quelle locali.
-          const backendTotal = data.stats.total;
-          if (backendTotal === total) {
-            setStats({
-              ...data.stats,
-              total,
-              interested: typeof data.stats.interested === "number" ? data.stats.interested : interestedCount,
-              notInterested: typeof data.stats.notInterested === "number" ? data.stats.notInterested : notInterestedCount,
-              interestedPercent: typeof data.stats.interestedPercent === "number" ? data.stats.interestedPercent : interestedPercent,
-              notInterestedPercent: typeof data.stats.notInterestedPercent === "number" ? data.stats.notInterestedPercent : notInterestedPercent,
-            });
-          } else {
-            setStats({
-              total,
-              interested: interestedCount,
-              interestedPercent,
-              notInterested: notInterestedCount,
-              notInterestedPercent,
-            });
-          }
-        } else {
-          setStats({
-            total,
-            interested: interestedCount,
-            interestedPercent,
-            notInterested: notInterestedCount,
-            notInterestedPercent,
-          });
-        }
+        setStats({
+          total,
+          interested: interestedCount,
+          interestedPercent,
+          notInterested: notInterestedCount,
+          notInterestedPercent,
+        });
       } catch (err) {
-        setError(err.message || "Errore inatteso");
+        setError(err?.message || "Errore inatteso");
       } finally {
         setLoading(false);
       }
@@ -311,9 +358,7 @@ export default function AdminDashboard() {
     setLastRowId(rowId);
 
     setTimeout(() => {
-      if (detailRef.current) {
-        detailRef.current.scrollIntoView({ behavior: "smooth", block: "start" });
-      }
+      if (detailRef.current) detailRef.current.scrollIntoView({ behavior: "smooth", block: "start" });
     }, 80);
   };
 
@@ -327,16 +372,12 @@ export default function AdminDashboard() {
 
       rowEl.scrollIntoView({ behavior: "smooth", block: "center" });
       rowEl.classList.add("admin-row-last");
-      setTimeout(() => {
-        rowEl.classList.remove("admin-row-last");
-      }, 1200);
+      setTimeout(() => rowEl.classList.remove("admin-row-last"), 1200);
     }, 80);
   };
 
   const handleLogout = () => {
-    if (typeof window !== "undefined") {
-      window.localStorage.removeItem("vt_admin_key");
-    }
+    if (typeof window !== "undefined") window.localStorage.removeItem("vt_admin_key");
 
     setAdminKey("");
     setIsAuth(false);
@@ -357,9 +398,7 @@ export default function AdminDashboard() {
           onSubmit={(e) => {
             e.preventDefault();
             if (!adminKey) return;
-            if (typeof window !== "undefined") {
-              window.localStorage.setItem("vt_admin_key", adminKey);
-            }
+            if (typeof window !== "undefined") window.localStorage.setItem("vt_admin_key", adminKey);
             setIsAuth(true);
             setError("");
           }}
@@ -408,11 +447,7 @@ export default function AdminDashboard() {
             <div className={`last-badge ${lastInfo.isFresh ? "fresh" : "stale"}`}>
               <span className="last-badge-icon">⏰</span>
               <span className="last-badge-text">{lastInfo.label}</span>
-              {lastInfo.isFresh ? (
-                <span className="last-badge-ok">✅</span>
-              ) : (
-                <span className="last-badge-alert">‼️</span>
-              )}
+              {lastInfo.isFresh ? <span className="last-badge-ok">✅</span> : <span className="last-badge-alert">‼️</span>}
             </div>
           )}
         </div>
@@ -421,8 +456,6 @@ export default function AdminDashboard() {
           Esci
         </button>
       </div>
-
-      <div className="stats-grid">{/* opzionale */}</div>
 
       {validation && (
         <section className={`validation-card validation-${validation.level}`}>
@@ -473,11 +506,7 @@ export default function AdminDashboard() {
           <div className="admin-table-body">
             {surveys.map((s, index) => {
               const rowId = `admin-row-${index}`;
-              const showScore =
-                typeof s.normalizedInterestScore === "number"
-                  ? s.normalizedInterestScore
-                  : "-";
-
+              const showScore = typeof s.normalizedInterestScore === "number" ? s.normalizedInterestScore : "-";
               const isInterested = !!s.normalizedIsInterested;
 
               return (
@@ -488,9 +517,17 @@ export default function AdminDashboard() {
                   className="admin-row"
                   onClick={() => handleRowClick(s, rowId)}
                 >
-                  <div className="admin-td admin-td-email" title={s.email}>
-                    {s.email || "-"}
-                  </div>
+                <div className="admin-td admin-td-email" title={s.email}>
+  <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+    <div>{s.email || "-"}</div>
+
+    <span
+      className={"admin-badge " + (s.isEmailSubscribed ? "admin-badge-subscribed" : "admin-badge-survey")}
+    >
+      {s.isEmailSubscribed ? "Sondaggio + iscrizione" : "Solo sondaggio"}
+    </span>
+  </div>
+</div>
 
                   <div className="admin-td admin-td-date">
                     {formatDate(s.createdAt || s.surveyCompletedAt || s.date)}
@@ -499,9 +536,7 @@ export default function AdminDashboard() {
                   <div className="admin-td admin-td-score">{showScore}</div>
 
                   <div className="admin-td admin-td-int">
-                    <span
-                      className={"admin-pill " + (isInterested ? "admin-pill-yes" : "admin-pill-no")}
-                    >
+                    <span className={"admin-pill " + (isInterested ? "admin-pill-yes" : "admin-pill-no")}>
                       {isInterested ? "SI" : "NO"}
                     </span>
                   </div>
@@ -509,9 +544,7 @@ export default function AdminDashboard() {
               );
             })}
 
-            {surveys.length === 0 && (
-              <div className="admin-table-empty">Nessun partecipante registrato.</div>
-            )}
+            {surveys.length === 0 && <div className="admin-table-empty">Nessun partecipante registrato.</div>}
           </div>
         </div>
       </section>
@@ -521,11 +554,7 @@ export default function AdminDashboard() {
           <div className="admin-detail">
             <div className="admin-detail-header">
               <h2>Dettaglio risposte</h2>
-              <button
-                type="button"
-                className="admin-detail-close"
-                onClick={handleCloseDetails}
-              >
+              <button type="button" className="admin-detail-close" onClick={handleCloseDetails}>
                 Chiudi
               </button>
             </div>
@@ -533,56 +562,39 @@ export default function AdminDashboard() {
             <p className="admin-detail-meta">
               <strong>Email:</strong> {selectedSurvey.email || "-"}
               <br />
-              <strong>Data compilazione:</strong>{" "}
-              {formatDate(selectedSurvey.createdAt || selectedSurvey.surveyCompletedAt || selectedSurvey.date)}
+              <strong>Data compilazione:</strong> {formatDate(selectedSurvey.createdAt || selectedSurvey.surveyCompletedAt || selectedSurvey.date)}
             </p>
 
             <div className="admin-detail-grid">
               <div className="admin-detail-card">
                 <div className="admin-detail-label">Uso principale</div>
-                <div className="admin-detail-value">
-                  {selectedSurvey.mainUseCase || answers.mainUseCase || "-"}
-                </div>
+                <div className="admin-detail-value">{selectedSurvey.mainUseCase || answers.mainUseCase || "-"}</div>
               </div>
 
               <div className="admin-detail-card">
-                <div className="admin-detail-label">
-                  Quanto spesso ti capita di avere bisogno di tradurre?
-                </div>
-                <div className="admin-detail-value">
-                  {selectedSurvey.usageFrequency || answers.usageFrequency || "-"}
-                </div>
+                <div className="admin-detail-label">Quanto spesso ti capita di avere bisogno di tradurre?</div>
+                <div className="admin-detail-value">{selectedSurvey.usageFrequency || answers.usageFrequency || "-"}</div>
               </div>
 
               <div className="admin-detail-card">
-                <div className="admin-detail-label">
-                  Quanto ti interesserebbe un traduttore vocale offline?
-                </div>
-                <div className="admin-detail-value">
-                  {selectedSurvey.offlineInterest || answers.offlineInterest || "-"}
-                </div>
+                <div className="admin-detail-label">Quanto ti interesserebbe un traduttore vocale offline?</div>
+                <div className="admin-detail-value">{selectedSurvey.offlineInterest || answers.offlineInterest || "-"}</div>
               </div>
 
               <div className="admin-detail-card">
                 <div className="admin-detail-label">Fascia di prezzo che consideri ok</div>
-                <div className="admin-detail-value">
-                  {selectedSurvey.priceRange || answers.priceRange || "-"}
-                </div>
+                <div className="admin-detail-value">{selectedSurvey.priceRange || answers.priceRange || "-"}</div>
               </div>
 
               <div className="admin-detail-card">
                 <div className="admin-detail-label">Score interesse (algoritmo)</div>
                 <div className="admin-detail-value">
-                  {typeof selectedSurvey.normalizedInterestScore === "number"
-                    ? selectedSurvey.normalizedInterestScore
-                    : "-"}
+                  {typeof selectedSurvey.normalizedInterestScore === "number" ? selectedSurvey.normalizedInterestScore : "-"}
                 </div>
 
-                {/* 🔎 Debug mismatch (visibile e chiarissimo) */}
                 <div className="admin-detail-subnote" style={{ marginTop: 6, opacity: 0.85, fontSize: 12 }}>
                   <div>
-                    <strong>Raw score:</strong>{" "}
-                    {typeof selectedSurvey._rawScore === "number" ? selectedSurvey._rawScore : "-"}
+                    <strong>Raw score:</strong> {typeof selectedSurvey._rawScore === "number" ? selectedSurvey._rawScore : "-"}
                   </div>
                   <div>
                     <strong>Raw interestScore:</strong>{" "}
@@ -593,42 +605,28 @@ export default function AdminDashboard() {
 
               <div className="admin-detail-card">
                 <div className="admin-detail-label">Profilo calcolato</div>
-                <div className="admin-detail-value">
-                  {selectedSurvey.normalizedIsInterested ? "Interessato" : "Non interessato"}
-                </div>
+                <div className="admin-detail-value">{selectedSurvey.normalizedIsInterested ? "Interessato" : "Non interessato"}</div>
               </div>
 
               <div className="admin-detail-card">
-                <div className="admin-detail-label">
-                  Hai difficoltà a comunicare in lingua straniera?
-                </div>
-                <div className="admin-detail-value">
-                  {selectedSurvey.communicationDifficulty || answers.communicationDifficulty || "-"}
-                </div>
+                <div className="admin-detail-label">Hai difficoltà a comunicare in lingua straniera?</div>
+                <div className="admin-detail-value">{selectedSurvey.communicationDifficulty || answers.communicationDifficulty || "-"}</div>
               </div>
 
               <div className="admin-detail-card">
                 <div className="admin-detail-label">Soluzione che usi oggi per tradurre</div>
-                <div className="admin-detail-value">
-                  {selectedSurvey.currentSolution || answers.currentSolution || "-"}
-                </div>
+                <div className="admin-detail-value">{selectedSurvey.currentSolution || answers.currentSolution || "-"}</div>
               </div>
 
               <div className="admin-detail-card">
-                <div className="admin-detail-label">
-                  Interesse immediato per traduttore offline
-                </div>
-                <div className="admin-detail-value">
-                  {selectedSurvey.instantOfflineInterest || answers.instantOfflineInterest || "-"}
-                </div>
+                <div className="admin-detail-label">Interesse immediato per traduttore offline</div>
+                <div className="admin-detail-value">{selectedSurvey.instantOfflineInterest || answers.instantOfflineInterest || "-"}</div>
               </div>
 
               {(selectedSurvey.extraNote || answers.extraNote) && (
                 <div className="admin-detail-card admin-detail-card-wide">
                   <div className="admin-detail-label">Note aggiuntive</div>
-                  <div className="admin-detail-value">
-                    {selectedSurvey.extraNote || answers.extraNote}
-                  </div>
+                  <div className="admin-detail-value">{selectedSurvey.extraNote || answers.extraNote}</div>
                 </div>
               )}
             </div>
