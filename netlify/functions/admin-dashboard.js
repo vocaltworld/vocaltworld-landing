@@ -81,54 +81,51 @@ async function loadFromKlaviyo(klaviyoKey, listId) {
 
   // 🎯 trasformiamo i profili Klaviyo in "surveys" per la dashboard
   const surveys = completedRecords.map((r) => {
-    const props = r.properties || {};
+  const props = r.properties || {};
 
-    // survey_answers può essere stringa JSON o oggetto
-    let answers = {};
-    if (props.survey_answers) {
-      if (typeof props.survey_answers === "string") {
-        try {
-          answers = JSON.parse(props.survey_answers);
-        } catch (e) {
-          console.warn("Impossibile fare JSON.parse di survey_answers:", e);
-        }
-      } else if (typeof props.survey_answers === "object") {
-        answers = props.survey_answers;
+  // survey_answers è una stringa JSON come da screenshot
+  let answers = {};
+  if (props.survey_answers) {
+    if (typeof props.survey_answers === "string") {
+      try {
+        answers = JSON.parse(props.survey_answers);
+      } catch (e) {
+        console.warn("Impossibile fare JSON.parse di survey_answers:", e);
       }
+    } else if (typeof props.survey_answers === "object") {
+      answers = props.survey_answers;
     }
+  }
 
-    const score = props.survey_score ?? null;
-    const level = props.survey_level || "";
-    const levelLower = String(level).toLowerCase();
+  const score = props.survey_score ?? null;          // <-- QUI
+  const level = props.survey_level || "";            // <-- QUI
+  const completedAt = props.survey_completed_at ||   // <-- QUI
+                      props.$last_event_time || null;
 
-    const interested =
-      levelLower === "speaker" ||
-      levelLower === "interessato" ||
-      levelLower === "molto interessato";
+  const levelLower = String(level).toLowerCase();
+  const interested =
+    levelLower === "speaker" ||
+    levelLower === "interessato" ||
+    levelLower === "molto interessato";
 
-    return {
-      email: r.email,
-      createdAt: props.survey_completed_at || props.$last_event_time || null,
-      score,
-      level,
-      interested,
-      answers: {
-        usageFrequency: answers.usageFrequency || answers.usage_frequency,
-        mainUseCase: answers.mainUseCase || answers.main_use_case,
-        offlineInterest: answers.offlineInterest || answers.offline_interest,
-        priceRange: answers.priceRange || answers.price_range,
-        communicationDifficulty:
-          answers.communicationDifficulty ||
-          answers.communication_difficulty,
-        currentSolution:
-          answers.currentSolution || answers.current_solution,
-        instantOfflineInterest:
-          answers.instantOfflineInterest ||
-          answers.instant_offline_interest,
-        extraNote: answers.extraNote || answers.extra_note,
-      },
-    };
-  });
+  return {
+    email: r.email,
+    createdAt: completedAt,  // usiamo questo in dashboard
+    score,
+    level,
+    interested,
+    answers: {
+      usageFrequency: answers.usageFrequency,
+      mainUseCase: answers.mainUseCase,
+      offlineInterest: answers.offlineInterest,
+      priceRange: answers.priceRange,
+      communicationDifficulty: answers.communicationDifficulty,
+      currentSolution: answers.currentSolution,
+      instantOfflineInterest: answers.instantOfflineInterest,
+      extraNote: answers.extraNote,
+    },
+  };
+});
 
   // 📊 calcoliamo le stats
   const total = surveys.length;

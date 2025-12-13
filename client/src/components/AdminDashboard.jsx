@@ -16,15 +16,14 @@ function formatDate(iso) {
 function getLastResponseInfo(surveys) {
   if (!surveys || surveys.length === 0) return null;
 
-  // Trova il sondaggio più recente usando createdAt o, in fallback, surveyCompletedAt
   const latest = surveys.reduce((acc, s) => {
     if (!acc) return s;
-    const d1 = new Date(s.createdAt || s.surveyCompletedAt);
-    const d2 = new Date(acc.createdAt || acc.surveyCompletedAt);
+    const d1 = new Date(s.createdAt || s.surveyCompletedAt || s.date);
+    const d2 = new Date(acc.createdAt || acc.surveyCompletedAt || acc.date);
     return d1 > d2 ? s : acc;
   }, null);
 
-  const lastIso = latest?.createdAt || latest?.surveyCompletedAt;
+  const lastIso = latest?.createdAt || latest?.surveyCompletedAt || latest?.date;
   if (!lastIso) return null;
 
   const lastDate = new Date(lastIso);
@@ -38,7 +37,6 @@ function getLastResponseInfo(surveys) {
   let isFresh = false;
 
   if (diffDays >= 1) {
-    // Più di un giorno fa → data precisa
     const formatted = lastDate.toLocaleString("it-IT", {
       day: "2-digit",
       month: "2-digit",
@@ -48,20 +46,89 @@ function getLastResponseInfo(surveys) {
     });
     label = `Ultimo sondaggio: ${formatted}`;
   } else if (diffHours >= 1) {
-    // Ore fa
     label = `Nuovo sondaggio ${diffHours}h fa`;
     isFresh = true;
   } else if (diffMin >= 1) {
-    // Minuti fa
     label = `Nuovo sondaggio ${diffMin} minuti fa`;
     isFresh = true;
   } else {
-    // Meno di un minuto
     label = "Nuovo sondaggio adesso";
     isFresh = true;
   }
 
   return { label, isFresh };
+}
+
+/**
+ * Normalizza i dati provenienti dal backend in modo coerente.
+ * - Risolve il bug tipico: interestScore = 0 ma score = 5 (o >0)
+ * - Unifica i campi: isInterested / interested
+ * - Unifica email/date e porta su top-level anche answers
+ */
+function normalizeSurvey(raw) {
+  const answers = raw?.answers && typeof raw.answers === "object" ? raw.answers : {};
+
+  const email =
+    raw?.email ??
+    answers?.email ??
+    raw?.properties?.email ??
+    raw?.profile?.email ??
+    "-";
+
+  const createdAt = raw?.createdAt ?? raw?.surveyCompletedAt ?? raw?.date ?? answers?.createdAt ?? answers?.surveyCompletedAt ?? null;
+
+  // score grezzo da varie sorgenti possibili
+  const rawScore =
+    (typeof raw?.score === "number" ? raw.score : null) ??
+    (typeof answers?.score === "number" ? answers.score : null) ??
+    (typeof raw?.interestScore === "number" ? raw.interestScore : null) ??
+    (typeof answers?.interestScore === "number" ? answers.interestScore : null);
+
+  const rawInterestScore =
+    (typeof raw?.interestScore === "number" ? raw.interestScore : null) ??
+    (typeof answers?.interestScore === "number" ? answers.interestScore : null);
+
+  // ✅ Fix mismatch:
+  // - se interestScore è null/undefined -> usa score
+  // - se interestScore è 0 MA score è >0 -> usa score (caso “bug”)
+  let normalizedInterestScore = null;
+  if (typeof rawInterestScore === "number") {
+    if (rawInterestScore === 0 && typeof raw?.score === "number" && raw.score > 0) {
+      normalizedInterestScore = raw.score;
+    } else if (rawInterestScore === 0 && typeof answers?.score === "number" && answers.score > 0) {
+      normalizedInterestScore = answers.score;
+    } else {
+      normalizedInterestScore = rawInterestScore;
+    }
+  } else if (typeof rawScore === "number") {
+    normalizedInterestScore = rawScore;
+  }
+
+  // isInterested coerente
+  const rawIsInterested =
+    (typeof raw?.isInterested === "boolean" ? raw.isInterested : null) ??
+    (typeof raw?.interested === "boolean" ? raw.interested : null) ??
+    (typeof answers?.isInterested === "boolean" ? answers.isInterested : null) ??
+    (typeof answers?.interested === "boolean" ? answers.interested : null);
+
+  // Se non arriva dal backend, lo calcoliamo
+  const computedIsInterested =
+    typeof normalizedInterestScore === "number" ? normalizedInterestScore >= 6 : false;
+
+  const normalizedIsInterested =
+    typeof rawIsInterested === "boolean" ? rawIsInterested : computedIsInterested;
+
+  return {
+    ...raw,
+    answers,
+    email,
+    createdAt,
+    // manteniamo anche i grezzi per debug in UI
+    _rawScore: typeof raw?.score === "number" ? raw.score : (typeof answers?.score === "number" ? answers.score : null),
+    _rawInterestScore: typeof raw?.interestScore === "number" ? raw.interestScore : (typeof answers?.interestScore === "number" ? answers.interestScore : null),
+    normalizedInterestScore,
+    normalizedIsInterested,
+  };
 }
 
 export default function AdminDashboard() {
@@ -72,7 +139,6 @@ export default function AdminDashboard() {
   const [selectedSurvey, setSelectedSurvey] = useState(null);
   const [lastRowId, setLastRowId] = useState(null);
 
-  // 🔐 Stato per la chiave admin (salvata in localStorage)
   const [adminKey, setAdminKey] = useState(() => {
     if (typeof window === "undefined") return "";
     return window.localStorage.getItem("vt_admin_key") || "";
@@ -86,7 +152,6 @@ export default function AdminDashboard() {
   const lastInfo = getLastResponseInfo(surveys);
   const answers = selectedSurvey?.answers || {};
 
-  // 🧠 Logica di validazione prodotto in base alle statistiche
   const validation = useMemo(() => {
     if (!stats || !stats.total) {
       return {
@@ -142,14 +207,13 @@ export default function AdminDashboard() {
   const detailRef = useRef(null);
 
   useEffect(() => {
-    if (!isAuth) return; // se non sono autenticato, non carico i dati
+    if (!isAuth) return;
 
     async function load() {
       try {
         setLoading(true);
         setError("");
 
-        // Chiamiamo la Netlify Function che espone i dati della dashboard
         const res = await fetch("/.netlify/functions/admin-dashboard", {
           method: "POST",
           headers: {
@@ -162,7 +226,6 @@ export default function AdminDashboard() {
         });
 
         if (res.status === 401) {
-          // chiave non valida: torno alla schermata di login
           setError("Codice segreto non valido.");
           setIsAuth(false);
           if (typeof window !== "undefined") {
@@ -173,48 +236,58 @@ export default function AdminDashboard() {
         }
 
         if (!res.ok) {
-          throw new Error(
-            "Errore nel caricamento dei dati (" + res.status + ")"
-          );
+          throw new Error("Errore nel caricamento dei dati (" + res.status + ")");
         }
 
         const data = await res.json();
 
-        // data.stats e data.surveys sono i formati attesi;
-        // in fallback gestiamo anche data.responses se la function li chiama così.
         let nextSurveys = data.surveys || data.responses || [];
-        if (!Array.isArray(nextSurveys)) {
-          nextSurveys = [];
-        }
+        if (!Array.isArray(nextSurveys)) nextSurveys = [];
 
-        // Ordina per data (più recenti in alto) come fallback, nel caso il backend non lo faccia già
+        // ✅ Normalizzazione robusta (fix mismatch score/interestScore)
+        nextSurveys = nextSurveys.map(normalizeSurvey);
+
+        // Ordina per data (più recenti in alto)
         nextSurveys = [...nextSurveys].sort((a, b) => {
           const da = new Date(a.createdAt || a.surveyCompletedAt || a.date || 0).getTime();
           const db = new Date(b.createdAt || b.surveyCompletedAt || b.date || 0).getTime();
           return db - da;
         });
 
-        // Ultimi in alto (già ordinati sopra)
         setSurveys(nextSurveys);
 
-        // Se la function fornisce già le statistiche le usiamo direttamente,
-        // altrimenti proviamo a calcolarle in modo compatibile con la UI esistente.
-        if (data.stats) {
-          setStats(data.stats);
+        // Stats: usa quelle backend SOLO se sembrano coerenti,
+        // altrimenti calcola qui su dati normalizzati.
+        const total = nextSurveys.length;
+        const interestedCount = nextSurveys.filter((s) => !!s.normalizedIsInterested).length;
+        const notInterestedCount = total - interestedCount;
+
+        const interestedPercent = total ? Math.round((interestedCount / total) * 100) : 0;
+        const notInterestedPercent = total ? Math.round((notInterestedCount / total) * 100) : 0;
+
+        if (data.stats && typeof data.stats.total === "number") {
+          // Se ti va, puoi commentare questa parte e usare sempre stats calcolate localmente.
+          // Io lascio questa regola “safe”: se stats backend non matchano, uso quelle locali.
+          const backendTotal = data.stats.total;
+          if (backendTotal === total) {
+            setStats({
+              ...data.stats,
+              total,
+              interested: typeof data.stats.interested === "number" ? data.stats.interested : interestedCount,
+              notInterested: typeof data.stats.notInterested === "number" ? data.stats.notInterested : notInterestedCount,
+              interestedPercent: typeof data.stats.interestedPercent === "number" ? data.stats.interestedPercent : interestedPercent,
+              notInterestedPercent: typeof data.stats.notInterestedPercent === "number" ? data.stats.notInterestedPercent : notInterestedPercent,
+            });
+          } else {
+            setStats({
+              total,
+              interested: interestedCount,
+              interestedPercent,
+              notInterested: notInterestedCount,
+              notInterestedPercent,
+            });
+          }
         } else {
-          const total = nextSurveys.length;
-
-          // contiamo gli utenti interessati in base al campo "interested" che arriva dal backend
-          const interestedCount = nextSurveys.filter((s) => s.interested).length;
-          const notInterestedCount = total - interestedCount;
-
-          const interestedPercent = total
-            ? Math.round((interestedCount / total) * 100)
-            : 0;
-          const notInterestedPercent = total
-            ? Math.round((notInterestedCount / total) * 100)
-            : 0;
-
           setStats({
             total,
             interested: interestedCount,
@@ -237,7 +310,6 @@ export default function AdminDashboard() {
     setSelectedSurvey(survey);
     setLastRowId(rowId);
 
-    // scroll verso il pannello dettagli
     setTimeout(() => {
       if (detailRef.current) {
         detailRef.current.scrollIntoView({ behavior: "smooth", block: "start" });
@@ -248,7 +320,6 @@ export default function AdminDashboard() {
   const handleCloseDetails = () => {
     setSelectedSurvey(null);
 
-    // ritorna alla riga che abbiamo appena visto e falla lampeggiare
     setTimeout(() => {
       if (!lastRowId) return;
       const rowEl = document.getElementById(lastRowId);
@@ -276,7 +347,6 @@ export default function AdminDashboard() {
     setError("");
   };
 
-  // 🔐 Se non sono autenticato, mostro la schermata di login
   if (!isAuth) {
     return (
       <div className="admin-page admin-login-page">
@@ -335,9 +405,7 @@ export default function AdminDashboard() {
           <h1 className="admin-title">Dashboard Vocal T World</h1>
 
           {lastInfo && (
-            <div
-              className={`last-badge ${lastInfo.isFresh ? "fresh" : "stale"}`}
-            >
+            <div className={`last-badge ${lastInfo.isFresh ? "fresh" : "stale"}`}>
               <span className="last-badge-icon">⏰</span>
               <span className="last-badge-text">{lastInfo.label}</span>
               {lastInfo.isFresh ? (
@@ -349,20 +417,13 @@ export default function AdminDashboard() {
           )}
         </div>
 
-        <button
-          type="button"
-          className="admin-logout-btn"
-          onClick={handleLogout}
-        >
+        <button type="button" className="admin-logout-btn" onClick={handleLogout}>
           Esci
         </button>
       </div>
 
-      <div className="stats-grid">
-        {/* box partecipanti, interessati, non interessati (vuoto, lo lasciamo) */}
-      </div>
+      <div className="stats-grid">{/* opzionale */}</div>
 
-      {/* 🔍 Box di validazione prodotto */}
       {validation && (
         <section className={`validation-card validation-${validation.level}`}>
           <div className="validation-main">
@@ -373,7 +434,6 @@ export default function AdminDashboard() {
         </section>
       )}
 
-      {/* BOX RIASSUNTO IN ALTO */}
       {stats && (
         <div className="admin-stats">
           <div className="admin-stat-card admin-stat-total">
@@ -385,10 +445,7 @@ export default function AdminDashboard() {
             <span className="admin-stat-label">Interessati</span>
             <span className="admin-stat-value">
               {stats.interested}
-              <span className="admin-stat-sub">
-                {" "}
-                ({stats.interestedPercent}%)
-              </span>
+              <span className="admin-stat-sub"> ({stats.interestedPercent}%)</span>
             </span>
           </div>
 
@@ -396,16 +453,12 @@ export default function AdminDashboard() {
             <span className="admin-stat-label">Non interessati</span>
             <span className="admin-stat-value">
               {stats.notInterested}
-              <span className="admin-stat-sub">
-                {" "}
-                ({stats.notInterestedPercent}%)
-              </span>
+              <span className="admin-stat-sub"> ({stats.notInterestedPercent}%)</span>
             </span>
           </div>
         </div>
       )}
 
-      {/* TABELLA PRINCIPALE */}
       <section className="admin-section">
         <h2 className="admin-subtitle">Elenco partecipanti</h2>
 
@@ -420,6 +473,13 @@ export default function AdminDashboard() {
           <div className="admin-table-body">
             {surveys.map((s, index) => {
               const rowId = `admin-row-${index}`;
+              const showScore =
+                typeof s.normalizedInterestScore === "number"
+                  ? s.normalizedInterestScore
+                  : "-";
+
+              const isInterested = !!s.normalizedIsInterested;
+
               return (
                 <button
                   key={rowId}
@@ -431,20 +491,18 @@ export default function AdminDashboard() {
                   <div className="admin-td admin-td-email" title={s.email}>
                     {s.email || "-"}
                   </div>
+
                   <div className="admin-td admin-td-date">
                     {formatDate(s.createdAt || s.surveyCompletedAt || s.date)}
                   </div>
-                  <div className="admin-td admin-td-score">
-                    {s.score ?? "-"}
-                  </div>
+
+                  <div className="admin-td admin-td-score">{showScore}</div>
+
                   <div className="admin-td admin-td-int">
                     <span
-                      className={
-                        "admin-pill " +
-                        (s.interested ? "admin-pill-yes" : "admin-pill-no")
-                      }
+                      className={"admin-pill " + (isInterested ? "admin-pill-yes" : "admin-pill-no")}
                     >
-                      {s.interested ? "SI" : "NO"}
+                      {isInterested ? "SI" : "NO"}
                     </span>
                   </div>
                 </button>
@@ -452,15 +510,12 @@ export default function AdminDashboard() {
             })}
 
             {surveys.length === 0 && (
-              <div className="admin-table-empty">
-                Nessun partecipante registrato.
-              </div>
+              <div className="admin-table-empty">Nessun partecipante registrato.</div>
             )}
           </div>
         </div>
       </section>
 
-      {/* DETTAGLIO RISPOSTE SINGOLO UTENTE */}
       <section className="admin-section" ref={detailRef}>
         {selectedSurvey && (
           <div className="admin-detail">
@@ -479,18 +534,14 @@ export default function AdminDashboard() {
               <strong>Email:</strong> {selectedSurvey.email || "-"}
               <br />
               <strong>Data compilazione:</strong>{" "}
-              {formatDate(
-                selectedSurvey.createdAt ||
-                  selectedSurvey.surveyCompletedAt ||
-                  selectedSurvey.date
-              )}
+              {formatDate(selectedSurvey.createdAt || selectedSurvey.surveyCompletedAt || selectedSurvey.date)}
             </p>
 
             <div className="admin-detail-grid">
               <div className="admin-detail-card">
                 <div className="admin-detail-label">Uso principale</div>
                 <div className="admin-detail-value">
-                  {answers.mainUseCase || "-"}
+                  {selectedSurvey.mainUseCase || answers.mainUseCase || "-"}
                 </div>
               </div>
 
@@ -499,7 +550,7 @@ export default function AdminDashboard() {
                   Quanto spesso ti capita di avere bisogno di tradurre?
                 </div>
                 <div className="admin-detail-value">
-                  {answers.usageFrequency || "-"}
+                  {selectedSurvey.usageFrequency || answers.usageFrequency || "-"}
                 </div>
               </div>
 
@@ -508,32 +559,42 @@ export default function AdminDashboard() {
                   Quanto ti interesserebbe un traduttore vocale offline?
                 </div>
                 <div className="admin-detail-value">
-                  {answers.offlineInterest || "-"}
+                  {selectedSurvey.offlineInterest || answers.offlineInterest || "-"}
                 </div>
               </div>
 
               <div className="admin-detail-card">
-                <div className="admin-detail-label">
-                  Fascia di prezzo che consideri ok
-                </div>
+                <div className="admin-detail-label">Fascia di prezzo che consideri ok</div>
                 <div className="admin-detail-value">
-                  {answers.priceRange || "-"}
+                  {selectedSurvey.priceRange || answers.priceRange || "-"}
                 </div>
               </div>
 
               <div className="admin-detail-card">
-                <div className="admin-detail-label">
-                  Score interesse (algoritmo)
-                </div>
+                <div className="admin-detail-label">Score interesse (algoritmo)</div>
                 <div className="admin-detail-value">
-                  {selectedSurvey.score ?? "-"}
+                  {typeof selectedSurvey.normalizedInterestScore === "number"
+                    ? selectedSurvey.normalizedInterestScore
+                    : "-"}
+                </div>
+
+                {/* 🔎 Debug mismatch (visibile e chiarissimo) */}
+                <div className="admin-detail-subnote" style={{ marginTop: 6, opacity: 0.85, fontSize: 12 }}>
+                  <div>
+                    <strong>Raw score:</strong>{" "}
+                    {typeof selectedSurvey._rawScore === "number" ? selectedSurvey._rawScore : "-"}
+                  </div>
+                  <div>
+                    <strong>Raw interestScore:</strong>{" "}
+                    {typeof selectedSurvey._rawInterestScore === "number" ? selectedSurvey._rawInterestScore : "-"}
+                  </div>
                 </div>
               </div>
 
               <div className="admin-detail-card">
                 <div className="admin-detail-label">Profilo calcolato</div>
                 <div className="admin-detail-value">
-                  {selectedSurvey.interested ? "Interessato" : "Non interessato"}
+                  {selectedSurvey.normalizedIsInterested ? "Interessato" : "Non interessato"}
                 </div>
               </div>
 
@@ -542,16 +603,14 @@ export default function AdminDashboard() {
                   Hai difficoltà a comunicare in lingua straniera?
                 </div>
                 <div className="admin-detail-value">
-                  {answers.communicationDifficulty || "-"}
+                  {selectedSurvey.communicationDifficulty || answers.communicationDifficulty || "-"}
                 </div>
               </div>
 
               <div className="admin-detail-card">
-                <div className="admin-detail-label">
-                  Soluzione che usi oggi per tradurre
-                </div>
+                <div className="admin-detail-label">Soluzione che usi oggi per tradurre</div>
                 <div className="admin-detail-value">
-                  {answers.currentSolution || "-"}
+                  {selectedSurvey.currentSolution || answers.currentSolution || "-"}
                 </div>
               </div>
 
@@ -560,15 +619,15 @@ export default function AdminDashboard() {
                   Interesse immediato per traduttore offline
                 </div>
                 <div className="admin-detail-value">
-                  {answers.instantOfflineInterest || "-"}
+                  {selectedSurvey.instantOfflineInterest || answers.instantOfflineInterest || "-"}
                 </div>
               </div>
 
-              {answers.extraNote && (
+              {(selectedSurvey.extraNote || answers.extraNote) && (
                 <div className="admin-detail-card admin-detail-card-wide">
                   <div className="admin-detail-label">Note aggiuntive</div>
                   <div className="admin-detail-value">
-                    {answers.extraNote}
+                    {selectedSurvey.extraNote || answers.extraNote}
                   </div>
                 </div>
               )}
