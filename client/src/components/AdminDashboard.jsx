@@ -522,7 +522,10 @@ export default function AdminDashboard() {
     <div>{s.email || "-"}</div>
 
     <span
-      className={"admin-badge " + (s.isEmailSubscribed ? "admin-badge-subscribed" : "admin-badge-survey")}
+      className={
+        "admin-badge " +
+        (s.isEmailSubscribed ? "admin-badge-subscribed" : "admin-badge-survey")
+      }
     >
       {s.isEmailSubscribed ? "Sondaggio + iscrizione" : "Solo sondaggio"}
     </span>
