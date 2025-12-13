@@ -1,14 +1,10 @@
 [build]
-  # Installa le dipendenze del client e poi builda
-  command = "cd client && npm install && npm run build"
-  publish = "client/dist"
-  functions = "netlify/functions"
+  base = "client"
+  publish = "dist"
+  functions = "../server/netlify/functions"
+
 [dev]
   command = "npm run dev"
-  port = 3999         # porta dove Netlify espone il sito
-  targetPort = 5173   # porta di Vite
+  port = 3999
+  targetPort = 5173
   framework = "vite"
-
-[functions]
-  directory = "netlify/functions"
-  node_bundler = "esbuild"
