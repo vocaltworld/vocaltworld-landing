@@ -314,9 +314,9 @@ export default function AdminDashboard() {
           method: "POST",
           headers: {
             "Content-Type": "application/json",
-            "x-admin-key": adminKey || "",
+            "x-admin-key": ADMIN_KEY || "",
           },
-          body: JSON.stringify({ secret: adminKey || "" }),
+          body: JSON.stringify({ secret: ADMIN_KEY || "" }),
         });
 
         if (res.status === 401) {
