@@ -1167,4 +1167,28 @@ textarea:focus {
     /* sposta esattamente una “onda” da 800px per un loop senza tagli */
     background-position: 800px 50%;
   }
+}/* === Admin: badge stato iscrizione === */
+.admin-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 10px;
+  border-radius: 999px;
+  font-size: 12px;
+  line-height: 1;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  width: fit-content;
+}
+
+.admin-badge-subscribed {
+  background: rgba(34, 197, 94, 0.10);
+  border-color: rgba(34, 197, 94, 0.35);
+  color: rgba(187, 247, 208, 0.95);
+  box-shadow: 0 0 18px rgba(34, 197, 94, 0.18);
+}
+
+.admin-badge-survey {
+  background: rgba(148, 163, 184, 0.10);
+  border-color: rgba(148, 163, 184, 0.30);
+  color: rgba(226, 232, 240, 0.85);
 }
