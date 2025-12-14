@@ -1,4 +1,38 @@
+
+// admin-dashboard.js
+// Fonte primaria: Supabase (tutte le compilazioni del sondaggio)
+// Fonte secondaria (opzionale, non bloccante): Klaviyo (in futuro per aggiornare email_subscribed)
+
 const KLAVIYO_REVISION = "2024-02-15";
+
+const SUPABASE_URL = process.env.SUPABASE_URL;
+const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
+
+const supabaseEndpoint = (path) => {
+  if (!SUPABASE_URL) return null;
+  return `${SUPABASE_URL.replace(/\/$/, "")}/rest/v1/${path}`;
+};
+
+const supabaseHeaders = () => {
+  if (!SUPABASE_SERVICE_ROLE_KEY) return null;
+  return {
+    apikey: SUPABASE_SERVICE_ROLE_KEY,
+    Authorization: `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,
+    Accept: "application/json",
+  };
+};
+
+const supabaseFetchJson = async (url, init) => {
+  const res = await fetch(url, init);
+  const text = await res.text();
+  let json;
+  try {
+    json = text ? JSON.parse(text) : null;
+  } catch {
+    json = text;
+  }
+  return { res, json };
+};
 
 function json(statusCode, body) {
   return {
@@ -40,84 +74,103 @@ exports.handler = async (event) => {
       return json(401, { error: "Unauthorized" });
     }
 
-    // ✅ ENV KLAVIYO
-    const KLAVIYO_PRIVATE_KEY = String(process.env.KLAVIYO_PRIVATE_KEY || "").trim();
-    const KLAVIYO_LIST_ID = String(process.env.KLAVIYO_LIST_ID || "").trim();
-
-    if (!KLAVIYO_PRIVATE_KEY || !KLAVIYO_LIST_ID) {
-      return json(500, { error: "Missing KLAVIYO_PRIVATE_KEY or KLAVIYO_LIST_ID" });
+    // ✅ ENV SUPABASE (PRIMARIO)
+    if (!SUPABASE_URL || !SUPABASE_SERVICE_ROLE_KEY) {
+      return json(500, {
+        error: "Missing SUPABASE_URL or SUPABASE_SERVICE_ROLE_KEY",
+      });
     }
 
-    // ✅ Fetch members of list (Klaviyo v2024)
-    const url = `https://a.klaviyo.com/api/lists/${encodeURIComponent(
-      KLAVIYO_LIST_ID
-    )}/profiles/?page[size]=100`;
+    // Leggiamo TUTTE le submissions dal DB (anche chi NON ha confermato l'email)
+    // Proviamo prima una select ricca, poi fallback minimale se alcune colonne non esistono.
+    const selectRich =
+      "email,created_at,survey_completed_at,score,interest_score,is_interested,email_subscribed,answers,level,consent";
+    const selectMin =
+      "email,created_at,survey_completed_at,score,interest_score,is_interested,email_subscribed";
 
-    const res = await fetch(url, {
-      method: "GET",
-      headers: {
-        Authorization: `Klaviyo-API-Key ${KLAVIYO_PRIVATE_KEY}`,
-        Accept: "application/json",
-        revision: KLAVIYO_REVISION,
-      },
-    });
+    const buildUrl = (select) => {
+      const base = supabaseEndpoint(
+        `survey_submissions?select=${encodeURIComponent(select)}&order=created_at.desc&limit=1000`
+      );
+      return base;
+    };
 
-    const text = await res.text();
-    let data;
-    try {
-      data = JSON.parse(text);
-    } catch {
-      data = { raw: text };
+    let sbRes;
+    let sbJson;
+
+    // 1) rich
+    {
+      const { res, json: data } = await supabaseFetchJson(buildUrl(selectRich), {
+        method: "GET",
+        headers: supabaseHeaders(),
+      });
+      sbRes = res;
+      sbJson = data;
+
+      if (!sbRes.ok) {
+        const msg = typeof sbJson === "object" && sbJson
+          ? JSON.stringify(sbJson)
+          : String(sbJson || "");
+        const maybeMissingColumn = msg.includes("column") && msg.includes("does not exist");
+
+        if (maybeMissingColumn) {
+          console.warn(
+            "Supabase select rich fallita per colonne mancanti. Faccio fallback minimal.",
+            sbRes.status,
+            sbJson
+          );
+          const { res: res2, json: data2 } = await supabaseFetchJson(buildUrl(selectMin), {
+            method: "GET",
+            headers: supabaseHeaders(),
+          });
+          sbRes = res2;
+          sbJson = data2;
+        }
+      }
     }
 
-    if (!res.ok) {
-      return json(res.status, { error: "Klaviyo error", status: res.status, data });
+    if (!sbRes.ok) {
+      return json(sbRes.status, { error: "Supabase error", status: sbRes.status, data: sbJson });
     }
 
-    const profiles = Array.isArray(data?.data) ? data.data : [];
+    const rows = Array.isArray(sbJson) ? sbJson : [];
 
-    // Normalizza in surveys
-    const surveys = profiles.map((p) => {
-      const attrs = p?.attributes || {};
-      const props = attrs?.properties || {};
-      const email = attrs?.email || "-";
-      const createdAt = attrs?.updated || attrs?.created || null;
+    // Normalizza in surveys nel formato atteso dal frontend
+    const surveys = rows.map((r) => {
+      const email = r?.email || "-";
+      const createdAt = r?.created_at || r?.survey_completed_at || null;
+      const surveyCompletedAt = r?.survey_completed_at || createdAt;
 
-      // answers = proprietà custom (dove Klaviyo salva survey_* ecc.)
-      const answers = props || {};
+      const answers = (r?.answers && typeof r.answers === "object") ? r.answers : {};
 
-      // --- NORMALIZZAZIONE SCORE / INTERESSE (chirurgica) ---
-      const rawSurveyScore =
-        answers?.survey_score ??
-        answers?.surveyScore ??
-        answers?.interestScore ??
-        answers?.score ??
-        null;
+      const rawScore =
+        (typeof r?.interest_score === "number" ? r.interest_score : null) ??
+        (typeof r?.score === "number" ? r.score : null);
 
       const normalizedScore =
-        typeof rawSurveyScore === "number"
-          ? rawSurveyScore
-          : rawSurveyScore != null
-            ? Number(rawSurveyScore)
-            : null;
+        typeof rawScore === "number" ? rawScore : (rawScore != null ? Number(rawScore) : null);
 
-      const normalizedIsInterested =
-        normalizedScore != null ? normalizedScore >= 6 : null;
+      const isInterested =
+        typeof r?.is_interested === "boolean"
+          ? r.is_interested
+          : (normalizedScore != null ? normalizedScore >= 6 : null);
 
-      // stato iscrizione: se c'è consenso email confermato
-      const consentArr = Array.isArray(answers?.$consent) ? answers.$consent : [];
-      const isEmailSubscribed = consentArr.includes("email");
+      const isEmailSubscribed =
+        typeof r?.email_subscribed === "boolean" ? r.email_subscribed : null;
 
       return {
         email,
         createdAt,
-        surveyCompletedAt: createdAt,
+        surveyCompletedAt,
         answers,
-        // campi normalizzati (evita null e mismatch)
+        // compat con UI
         score: normalizedScore,
         interestScore: normalizedScore,
-        isInterested: normalizedIsInterested,
+        isInterested,
         isEmailSubscribed,
+        // extra (se presenti)
+        level: r?.level ?? answers?.survey_level ?? null,
+        consent: typeof r?.consent === "boolean" ? r.consent : undefined,
       };
     });
 
