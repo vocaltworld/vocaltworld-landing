@@ -4,9 +4,38 @@
 const fs = require("fs/promises");
 const path = require("path");
 
-const DATA_DIR = path.join(__dirname, "../../server/data");
-const SURVEYS_FILE = path.join(DATA_DIR, "surveys.json");
-const STATS_FILE = path.join(DATA_DIR, "stats.json");
+// NOTE: il salvataggio su file locale in Netlify Functions non è affidabile (filesystem effimero).
+// Da ora in poi Supabase è la fonte primaria dei dati.
+
+const SUPABASE_URL = process.env.SUPABASE_URL;
+const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
+
+// REST endpoint PostgREST
+const supabaseEndpoint = (path) => {
+  if (!SUPABASE_URL) return null;
+  return `${SUPABASE_URL.replace(/\/$/, "")}/rest/v1/${path}`;
+};
+
+const supabaseHeaders = () => {
+  if (!SUPABASE_SERVICE_ROLE_KEY) return null;
+  return {
+    apikey: SUPABASE_SERVICE_ROLE_KEY,
+    Authorization: `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,
+    "Content-Type": "application/json",
+  };
+};
+
+const supabaseFetchJson = async (url, init) => {
+  const res = await fetch(url, init);
+  const text = await res.text();
+  let json;
+  try {
+    json = text ? JSON.parse(text) : null;
+  } catch {
+    json = text;
+  }
+  return { res, json };
+};
 
 exports.handler = async (event, context) => {
   console.log("Request from:", event.httpMethod, event.path);
@@ -17,6 +46,11 @@ exports.handler = async (event, context) => {
   console.log(
     "Env KLAVIYO_LIST_ID presente?:",
     !!process.env.KLAVIYO_LIST_ID
+  );
+  console.log("Env SUPABASE_URL presente?:", !!process.env.SUPABASE_URL);
+  console.log(
+    "Env SUPABASE_SERVICE_ROLE_KEY presente?:",
+    !!process.env.SUPABASE_SERVICE_ROLE_KEY
   );
 
   // ✅ Consenti solo POST
@@ -399,6 +433,163 @@ exports.handler = async (event, context) => {
       console.warn("KICKBOX_API_KEY non presente, salto validazione Kickbox.");
     }
 
+    // =========================
+    //  SUPABASE (PRIMARIO)
+    //  - salva SEMPRE il sondaggio
+    //  - Klaviyo resta SECONDARIO (solo per iscrizione/flow)
+    // =========================
+
+    if (!SUPABASE_URL || !SUPABASE_SERVICE_ROLE_KEY) {
+      console.error("SUPABASE_URL o SUPABASE_SERVICE_ROLE_KEY mancanti (Netlify env)");
+      return {
+        statusCode: 500,
+        body: JSON.stringify({
+          error: "Missing Supabase env",
+          message:
+            "Configurazione Supabase mancante. Controlla SUPABASE_URL e SUPABASE_SERVICE_ROLE_KEY su Netlify.",
+        }),
+      };
+    }
+
+    // 0) Se esiste già una submission per questa email (survey_completed=true), blocchiamo (come Klaviyo)
+    try {
+      const checkUrl = supabaseEndpoint(
+        `survey_submissions?select=id&email=eq.${encodeURIComponent(
+          normalizedEmail
+        )}&survey_completed=eq.true&limit=1`
+      );
+
+      const { res: checkRes, json: checkJson } = await supabaseFetchJson(
+        checkUrl,
+        {
+          method: "GET",
+          headers: {
+            ...supabaseHeaders(),
+            Accept: "application/json",
+          },
+        }
+      );
+
+      if (!checkRes.ok) {
+        console.error("Supabase check error:", checkRes.status, checkJson);
+        return {
+          statusCode: 502,
+          body: JSON.stringify({
+            error: "supabase_check_failed",
+            message:
+              "Errore durante il controllo dati (Supabase). Riprova tra qualche minuto.",
+          }),
+        };
+      }
+
+      if (Array.isArray(checkJson) && checkJson.length > 0) {
+        return {
+          statusCode: 409,
+          body: JSON.stringify({
+            error: "already_submitted",
+            message: "Hai già compilato il sondaggio. Grazie!",
+          }),
+        };
+      }
+    } catch (e) {
+      console.error("Supabase check exception:", e);
+      return {
+        statusCode: 502,
+        body: JSON.stringify({
+          error: "supabase_check_failed",
+          message:
+            "Errore durante il controllo dati (Supabase). Riprova tra qualche minuto.",
+        }),
+      };
+    }
+
+    // 1) Inserimento PRIMARIO su Supabase
+    // NB: email_subscribed deve restare FALSE finché non arriva la conferma double opt-in da Klaviyo.
+    const isInterested = score >= 6;
+
+    const supabaseRowRich = {
+      email: normalizedEmail,
+      created_at: new Date().toISOString(),
+      survey_completed: true,
+      survey_completed_at: surveyCompletedAt,
+      email_subscribed: false,
+      score,
+      interest_score: score,
+      is_interested: isInterested,
+      // campi extra (se esistono nella tabella li salviamo; se non esistono faremo fallback)
+      level,
+      consent: !!consent,
+      answers: surveyAnswers,
+    };
+
+    const supabaseRowMinimal = {
+      email: normalizedEmail,
+      survey_completed: true,
+      survey_completed_at: surveyCompletedAt,
+      email_subscribed: false,
+      score,
+      interest_score: score,
+      is_interested: isInterested,
+    };
+
+    const insertUrl = supabaseEndpoint("survey_submissions");
+
+    const tryInsert = async (row) => {
+      return supabaseFetchJson(insertUrl, {
+        method: "POST",
+        headers: {
+          ...supabaseHeaders(),
+          Accept: "application/json",
+          Prefer: "return=representation",
+        },
+        body: JSON.stringify(row),
+      });
+    };
+
+    // Tentiamo prima l'inserimento ricco, poi fallback minimale se la tabella non ha alcune colonne.
+    let supaInsertRes;
+    let supaInsertJson;
+
+    {
+      const { res, json } = await tryInsert(supabaseRowRich);
+      supaInsertRes = res;
+      supaInsertJson = json;
+
+      if (!supaInsertRes.ok) {
+        const msg = typeof supaInsertJson === "object" && supaInsertJson
+          ? JSON.stringify(supaInsertJson)
+          : String(supaInsertJson || "");
+
+        // Se l'errore è dovuto a colonne mancanti, facciamo fallback al minimal
+        const maybeMissingColumn = msg.includes("column") && msg.includes("does not exist");
+
+        if (maybeMissingColumn) {
+          console.warn(
+            "Supabase insert rich fallito per colonne mancanti. Faccio fallback minimal.",
+            supaInsertRes.status,
+            supaInsertJson
+          );
+          const { res: res2, json: json2 } = await tryInsert(supabaseRowMinimal);
+          supaInsertRes = res2;
+          supaInsertJson = json2;
+        }
+      }
+    }
+
+    if (!supaInsertRes.ok) {
+      console.error("Supabase insert error:", supaInsertRes.status, supaInsertJson);
+      return {
+        statusCode: 502,
+        body: JSON.stringify({
+          error: "supabase_insert_failed",
+          message:
+            "Errore durante il salvataggio del sondaggio (Supabase). Riprova tra qualche minuto.",
+        }),
+      };
+    }
+
+    console.log("✅ Supabase: survey salvato", supaInsertJson);
+
     // 2️⃣ CREA / AGGIORNA IL PROFILO con le proprietà del sondaggio
     const profileRes = await fetch("https://a.klaviyo.com/api/profiles/", {
       method: "POST",
@@ -578,71 +769,6 @@ if (!profileRes.ok) {
       // Non blocchiamo l'utente se la dashboard fallisce, è solo logging interno
     }
 
-    // ---------- Salvataggio dati per la dashboard ----------
-    try {
-      const interested = score >= 5; // stesso criterio usato nel resto della logica
-
-      const newSurvey = {
-        email: normalizedEmail,
-        createdAt: new Date().toISOString(),
-        score,
-        interested, // true/false
-        answers: {
-          usageFrequency,
-          mainUseCase,
-          offlineInterest,
-          priceRange,
-          communicationDifficulty,
-          currentSolution,
-          instantOfflineInterest,
-          extraNote,
-        },
-      };
-
-      // Mi assicuro che la cartella esista
-      await fs.mkdir(DATA_DIR, { recursive: true });
-
-      // Leggo eventuali sondaggi precedenti
-      let surveys = [];
-      try {
-        const raw = await fs.readFile(SURVEYS_FILE, "utf8");
-        if (raw) {
-          surveys = JSON.parse(raw);
-        }
-      } catch (readErr) {
-        console.warn("surveys.json non trovato o non leggibile, ne creo uno nuovo:", readErr.message);
-      }
-
-      // Aggiungo il nuovo sondaggio in coda
-      surveys.push(newSurvey);
-
-      // calcoli stats (total, interestedCount, ecc...)
-      const total = surveys.length;
-      const interestedCount = surveys.filter((s) => s.interested).length;
-      const notInterestedCount = total - interestedCount;
-
-      const interestedPercent =
-        total > 0 ? Math.round((interestedCount / total) * 100) : 0;
-      const notInterestedPercent = 100 - interestedPercent;
-
-      const stats = {
-        total,
-        interested: interestedCount,
-        notInterested: notInterestedCount,
-        interestedPercent,
-        notInterestedPercent,
-      };
-
-      // salviamo su disco
-      await fs.writeFile(SURVEYS_FILE, JSON.stringify(surveys, null, 2));
-      await fs.writeFile(STATS_FILE, JSON.stringify(stats, null, 2));
-
-      console.log("✅ Dati dashboard salvati (surveys.json / stats.json)");
-    } catch (saveErr) {
-      console.error("Errore salvataggio dati dashboard:", saveErr);
-      // Non blocchiamo la risposta all'utente se fallisce il log interno
-    }
-    // ---------- fine salvataggio dashboard ----------
     // ✅ Tutto ok
     return {
       statusCode: 200,
