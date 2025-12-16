@@ -1,5 +1,3 @@
-// netlify/functions/admin-dashboard.js
-
 const SUPABASE_TABLE = "survey_submissions";
 
 function json(statusCode, body) {
@@ -19,13 +17,6 @@ function getHeader(headers, name) {
     (k) => k.toLowerCase() === name.toLowerCase()
   );
   return key ? String(headers[key] || "") : "";
-}
-
-function safeNumber(v) {
-  if (typeof v === "number") return v;
-  if (v == null) return null;
-  const n = Number(v);
-  return Number.isFinite(n) ? n : null;
 }
 
 exports.handler = async (event) => {
@@ -60,28 +51,34 @@ exports.handler = async (event) => {
       });
     }
 
-    // ✅ Query param opzionale: limit
-    const limit = Math.min(
-      Math.max(parseInt(event.queryStringParameters?.limit || "1000", 10) || 1000, 1),
-      5000
-    );
+    const urlBase = SUPABASE_URL.replace(/\/$/, "");
 
-    // Normalizziamo URL (niente doppio //)
-    const base = SUPABASE_URL.replace(/\/$/, "");
+    // query params
+    const qs = event.queryStringParameters || {};
+    const limit = Math.min(Number(qs.limit || 1000) || 1000, 5000);
 
-    // ✅ Colonne REALI in tabella (snake_case)
-    // NOTA: non referenziare MAI campi camelCase (es. interestScore / createdAt) perché in Postgres non esistono.
+    // ✅ LEGGIAMO SOLO COLONNE REALI (snake_case)
     const select =
-      "id,email,created_at,survey_completed,survey_completed_at,email_subscribed,email_subscribed_at,score,interest_score,is_interested,answers,source";
+      [
+        "id",
+        "email",
+        "created_at",
+        "survey_completed",
+        "survey_completed_at",
+        "email_subscribed",
+        "email_subscribed_at",
+        "score",
+        "interest_score",
+        "is_interested",
+        "answers",
+        "source",
+      ].join(",");
 
-    // Costruiamo l’URL in modo safe (evita encoding strani e ci assicura che NON compaiano campi sbagliati)
-    const url = new URL(`${base}/rest/v1/${SUPABASE_TABLE}`);
-    url.searchParams.set("select", select);
-    url.searchParams.set("order", "created_at.desc.nullslast");
-    url.searchParams.set("limit", String(limit));
-
-    const endpoint = url.toString();
-    console.log("[admin-dashboard] Supabase endpoint:", endpoint);
+    const endpoint =
+      `${urlBase}/rest/v1/${SUPABASE_TABLE}` +
+      `?select=${encodeURIComponent(select)}` +
+      `&order=created_at.desc.nullslast` +
+      `&limit=${limit}`;
 
     const res = await fetch(endpoint, {
       method: "GET",
@@ -92,13 +89,7 @@ exports.handler = async (event) => {
       },
     });
 
-    const text = await res.text();
-    let data;
-    try {
-      data = text ? JSON.parse(text) : null;
-    } catch {
-      data = { raw: text };
-    }
+    const data = await res.json().catch(() => null);
 
     if (!res.ok) {
       return json(res.status, {
@@ -111,34 +102,34 @@ exports.handler = async (event) => {
 
     const rows = Array.isArray(data) ? data : [];
 
-    // ✅ Normalizzazione verso lo shape che usa la dashboard (camelCase + campi coerenti)
+    // ✅ Normalizzazione → output in camelCase per il frontend
     const surveys = rows.map((r) => {
-      const normalizedScore = safeNumber(r?.score ?? r?.interest_score ?? r?.interestScore);
+      const numericScore =
+        r.score != null ? Number(r.score) :
+        r.interest_score != null ? Number(r.interest_score) :
+        null;
 
-      const normalizedIsInterested =
-        typeof r?.is_interested === "boolean"
+      const isInterested =
+        typeof r.is_interested === "boolean"
           ? r.is_interested
-          : normalizedScore != null
-            ? normalizedScore >= 6
-            : null;
-
-      const isEmailSubscribed =
-        typeof r?.email_subscribed === "boolean" ? r.email_subscribed : false;
+          : (numericScore != null ? numericScore >= 6 : null);
 
       return {
-        email: r?.email || "-",
-        createdAt: r?.created_at || null,
-        surveyCompletedAt: r?.survey_completed_at || r?.created_at || null,
-        answers: r?.answers ?? null,
-        score: normalizedScore,
-        interestScore: normalizedScore,
-        isInterested: normalizedIsInterested,
-        isEmailSubscribed,
-        // campi extra utili
-        surveyCompleted:
-          typeof r?.survey_completed === "boolean" ? r.survey_completed : null,
-        emailSubscribedAt: r?.email_subscribed_at || null,
-        source: r?.source ?? null,
+        email: r.email || "-",
+        createdAt: r.created_at || null,
+        surveyCompleted: !!r.survey_completed,
+        surveyCompletedAt: r.survey_completed_at || r.created_at || null,
+
+        // 🔥 questo è quello che ti serve per togliere "Solo sondaggio"
+        isEmailSubscribed: !!r.email_subscribed,
+        emailSubscribedAt: r.email_subscribed_at || null,
+
+        score: numericScore,
+        interestScore: numericScore,
+        isInterested,
+
+        answers: r.answers || null,
+        source: r.source ?? null,
       };
     });
 
@@ -151,9 +142,7 @@ exports.handler = async (event) => {
       interested: interestedCount,
       notInterested: notInterestedCount,
       interestedPercent: total ? Math.round((interestedCount / total) * 100) : 0,
-      notInterestedPercent: total
-        ? Math.round((notInterestedCount / total) * 100)
-        : 0,
+      notInterestedPercent: total ? Math.round((notInterestedCount / total) * 100) : 0,
     };
 
     return json(200, { ok: true, stats, surveys });
