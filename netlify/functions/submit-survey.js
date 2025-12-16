@@ -1,8 +1,6 @@
 
 // netlify/functions/submit-survey.js
 
-const fs = require("fs/promises");
-const path = require("path");
 
 // NOTE: il salvataggio su file locale in Netlify Functions non è affidabile (filesystem effimero).
 // Da ora in poi Supabase è la fonte primaria dei dati.
@@ -504,77 +502,38 @@ exports.handler = async (event, context) => {
     }
 
     // 1) Inserimento PRIMARIO su Supabase
-    // NB: email_subscribed deve restare FALSE finché non arriva la conferma double opt-in da Klaviyo.
-    const isInterested = score >= 6;
-
-    const supabaseRowRich = {
-      email: normalizedEmail,
-      created_at: new Date().toISOString(),
-      survey_completed: true,
-      survey_completed_at: surveyCompletedAt,
-      email_subscribed: false,
-      score,
-      interest_score: score,
-      is_interested: isInterested,
-      // campi extra (se esistono nella tabella li salviamo; se non esistono faremo fallback)
-      level,
-      consent: !!consent,
-      answers: surveyAnswers,
-    };
-
-    const supabaseRowMinimal = {
-      email: normalizedEmail,
-      survey_completed: true,
-      survey_completed_at: surveyCompletedAt,
-      email_subscribed: false,
-      score,
-      interest_score: score,
-      is_interested: isInterested,
-    };
+    // NB: email_subscribed resta FALSE finché non arriva la conferma double opt-in da Klaviyo.
+    // Coerenza logica: consideriamo interessato chi ha score >= 5 (come nel resto del progetto).
+    const isInterested = score >= 5;
 
     const insertUrl = supabaseEndpoint("survey_submissions");
 
-    const tryInsert = async (row) => {
-      return supabaseFetchJson(insertUrl, {
+    // Salviamo SOLO colonne sicuramente presenti in tabella (evitiamo mismatch colonne)
+    const supabaseRow = {
+      email: normalizedEmail,
+      survey_completed: true,
+      survey_completed_at: surveyCompletedAt,
+      email_subscribed: false,
+      email_subscribed_at: null,
+      score,
+      interest_score: score,
+      is_interested: isInterested,
+      answers: surveyAnswers,
+      source: "survey",
+    };
+
+    const { res: supaInsertRes, json: supaInsertJson } = await supabaseFetchJson(
+      insertUrl,
+      {
         method: "POST",
         headers: {
           ...supabaseHeaders(),
           Accept: "application/json",
           Prefer: "return=representation",
         },
-        body: JSON.stringify(row),
-      });
-    };
-
-    // Tentiamo prima l'inserimento ricco, poi fallback minimale se la tabella non ha alcune colonne.
-    let supaInsertRes;
-    let supaInsertJson;
-
-    {
-      const { res, json } = await tryInsert(supabaseRowRich);
-      supaInsertRes = res;
-      supaInsertJson = json;
-
-      if (!supaInsertRes.ok) {
-        const msg = typeof supaInsertJson === "object" && supaInsertJson
-          ? JSON.stringify(supaInsertJson)
-          : String(supaInsertJson || "");
-
-        // Se l'errore è dovuto a colonne mancanti, facciamo fallback al minimal
-        const maybeMissingColumn = msg.includes("column") && msg.includes("does not exist");
-
-        if (maybeMissingColumn) {
-          console.warn(
-            "Supabase insert rich fallito per colonne mancanti. Faccio fallback minimal.",
-            supaInsertRes.status,
-            supaInsertJson
-          );
-          const { res: res2, json: json2 } = await tryInsert(supabaseRowMinimal);
-          supaInsertRes = res2;
-          supaInsertJson = json2;
-        }
+        body: JSON.stringify(supabaseRow),
       }
-    }
+    );
 
     if (!supaInsertRes.ok) {
       console.error("Supabase insert error:", supaInsertRes.status, supaInsertJson);
