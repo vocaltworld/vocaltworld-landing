@@ -21,31 +21,35 @@ exports.handler = async (event) => {
     // ✅ secret anti-abuso (mettila su Netlify env)
     const WEBHOOK_SECRET = String(process.env.KLAVIYO_WEBHOOK_SECRET || "").trim();
 
-    // ✅ Accetta più nomi header (Klaviyo UI a volte tronca/varia)
-    const provided = (
-      getHeader(event.headers, "x-webhook-secret") ||
-      getHeader(event.headers, "x-klaviyo-webhook-secret") ||
-      getHeader(event.headers, "klaviyo-webhook-secret") ||
-      getHeader(event.headers, "klaviyo_webhook_secret") ||
-      getHeader(event.headers, "klaviyo-webhook-sec") ||
-      getHeader(event.headers, "klaviyo_webhook_sec")
-    ).trim();
-
-    if (!WEBHOOK_SECRET || provided !== WEBHOOK_SECRET) {
-      return json(401, { ok: false, error: "Unauthorized" });
-    }
-
-    const SUPABASE_URL = String(process.env.SUPABASE_URL || "").trim();
-    const SERVICE_KEY = String(process.env.SUPABASE_SERVICE_ROLE_KEY || "").trim();
-    if (!SUPABASE_URL || !SERVICE_KEY) {
-      return json(500, { ok: false, error: "Missing SUPABASE_URL or SUPABASE_SERVICE_ROLE_KEY" });
-    }
-
+    // ✅ Parse body early (serve anche per prendere il secret da body se Klaviyo non passa header)
     let payload = {};
     try {
       payload = event.body ? JSON.parse(event.body) : {};
     } catch {
       payload = {};
+    }
+
+    // ✅ Accetta più nomi header (Klaviyo UI a volte tronca/varia)
+    const headerProvided = (
+      getHeader(event.headers, "x-webhook-secret") ||
+      getHeader(event.headers, "x-klaviyo-webhook-secret") ||
+      getHeader(event.headers, "klaviyo-webhook-secret") ||
+      getHeader(event.headers, "klaviyo_webhook_secret") ||
+      getHeader(event.headers, "klaviyo-webhook-sec") ||
+      getHeader(event.headers, "klaviyo_webhook_sec") ||
+      getHeader(event.headers, "klaviyo_webhook_secret") ||
+      getHeader(event.headers, "klaviyo_webhook_sec")
+    ).trim();
+
+    // ✅ Fallback: secret nel body (utile per test manuali o se Klaviyo non supporta header custom)
+    const bodyProvided = String(
+      payload?.secret || payload?.webhook_secret || payload?.webhookSecret || ""
+    ).trim();
+
+    const provided = (headerProvided || bodyProvided).trim();
+
+    if (!WEBHOOK_SECRET || !provided || provided !== WEBHOOK_SECRET) {
+      return json(401, { ok: false, error: "Unauthorized" });
     }
 
     // ✅ Klaviyo può mandare email in vari path
