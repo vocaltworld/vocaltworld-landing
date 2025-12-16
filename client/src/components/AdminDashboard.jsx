@@ -242,11 +242,23 @@ export default function AdminDashboard() {
   const pollingRef = useRef(null);
   const selectedKeyRef = useRef(null);
 
+  const lastFetchAtRef = useRef(0);
+  const lastKeysRef = useRef(new Set());
+  const [newItems, setNewItems] = useState(0);
+  const [isSyncing, setIsSyncing] = useState(false);
+
   // Chiave stabile per ritrovare lo stesso record dopo un refresh dei dati
   const getSurveyKey = (s) => {
     const email = String(s?.email || "").toLowerCase();
-    const ts = s?.createdAt || s?.surveyCompletedAt || s?.date || "";
-    return `${email}__${ts}`;
+    const ts =
+      s?.createdAt ||
+      s?.surveyCompletedAt ||
+      s?.date ||
+      s?.created_at ||
+      s?.survey_completed_at ||
+      "";
+    const id = s?.id ?? s?.submission_id ?? "";
+    return `${email}__${id || ts}`;
   };
 
   const [adminKey, setAdminKey] = useState(() => {
@@ -317,9 +329,14 @@ export default function AdminDashboard() {
   const detailRef = useRef(null);
 
   async function fetchDashboardData({ silent = false } = {}) {
+    // Evita richieste troppo ravvicinate (anti-thrashing)
+    const now = Date.now();
+    if (silent && now - lastFetchAtRef.current < 5000) return;
+    lastFetchAtRef.current = now;
     try {
       if (!silent) setLoading(true);
       if (!silent) setError("");
+      if (silent) setIsSyncing(true);
 
       const res = await fetch("/.netlify/functions/admin-dashboard", {
         method: "POST",
@@ -353,6 +370,16 @@ export default function AdminDashboard() {
         return db - da;
       });
 
+      // Calcolo nuovi elementi (senza impattare scroll / dettagli)
+      const nextKeys = new Set(nextSurveys.map(getSurveyKey));
+      const prevKeys = lastKeysRef.current;
+      let added = 0;
+      for (const k of nextKeys) {
+        if (!prevKeys.has(k)) added += 1;
+      }
+      lastKeysRef.current = nextKeys;
+      if (added > 0) setNewItems((x) => x + added);
+
       setSurveys(nextSurveys);
 
       // Se stavi guardando un dettaglio, mantieni la selezione e aggiorna i dati
@@ -379,6 +406,7 @@ export default function AdminDashboard() {
       // In modalità silent non "sporchiamo" la UI con errori
       if (!silent) setError(err?.message || "Errore inatteso");
     } finally {
+      if (silent) setIsSyncing(false);
       if (!silent) setLoading(false);
     }
   }
@@ -389,16 +417,31 @@ export default function AdminDashboard() {
     // primo load “normale”
     fetchDashboardData({ silent: false });
 
-    // polling ogni 30 secondi “silenzioso” (nessun refresh pagina)
+    // polling ogni 15 secondi “silenzioso” (nessun refresh pagina)
     pollingRef.current = setInterval(() => {
       // se tab non è visibile, non sprechiamo chiamate
       if (typeof document !== "undefined" && document.hidden) return;
       fetchDashboardData({ silent: true });
-    }, 30000);
+    }, 15000);
+
+    const onFocus = () => {
+      fetchDashboardData({ silent: true });
+    };
+
+    const onVisibility = () => {
+      if (typeof document !== "undefined" && !document.hidden) {
+        fetchDashboardData({ silent: true });
+      }
+    };
+
+    if (typeof window !== "undefined") window.addEventListener("focus", onFocus);
+    if (typeof document !== "undefined") document.addEventListener("visibilitychange", onVisibility);
 
     return () => {
       if (pollingRef.current) clearInterval(pollingRef.current);
       pollingRef.current = null;
+      if (typeof window !== "undefined") window.removeEventListener("focus", onFocus);
+      if (typeof document !== "undefined") document.removeEventListener("visibilitychange", onVisibility);
     };
   }, [isAuth, adminKey]);
 
@@ -406,6 +449,8 @@ export default function AdminDashboard() {
     setSelectedSurvey(survey);
     setLastRowId(rowId);
     selectedKeyRef.current = getSurveyKey(survey);
+    // Azzeriamo il contatore nuovi se apri un dettaglio (stai “guardando” gli ultimi dati)
+    setNewItems(0);
 
     setTimeout(() => {
       if (detailRef.current) detailRef.current.scrollIntoView({ behavior: "smooth", block: "start" });
@@ -434,6 +479,8 @@ export default function AdminDashboard() {
     setIsAuth(false);
     setStats(null);
     setSurveys([]);
+    lastKeysRef.current = new Set();
+    setNewItems(0);
     setSelectedSurvey(null);
     selectedKeyRef.current = null;
     setLastRowId(null);
@@ -504,9 +551,64 @@ export default function AdminDashboard() {
           )}
         </div>
 
-        <button type="button" className="admin-logout-btn" onClick={handleLogout}>
-          Esci
-        </button>
+        <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
+          {(newItems > 0 || isSyncing) && (
+            <div
+              className={"admin-sync-badge " + (isSyncing ? "syncing" : "ready")}
+              title={isSyncing ? "Sincronizzazione in corso" : "Dati aggiornati"}
+              style={{
+                display: "inline-flex",
+                alignItems: "center",
+                gap: 8,
+                padding: "8px 10px",
+                borderRadius: 999,
+                fontSize: 12,
+                opacity: 0.95,
+              }}
+            >
+              <span aria-hidden="true">{isSyncing ? "⏳" : "✅"}</span>
+              <span>
+                {isSyncing
+                  ? "Sincronizzo…"
+                  : newItems > 0
+                    ? `${newItems} nuovi`
+                    : "Aggiornato"}
+              </span>
+              {newItems > 0 && !isSyncing && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setNewItems(0);
+                    fetchDashboardData({ silent: true });
+                  }}
+                  style={{
+                    border: "none",
+                    background: "transparent",
+                    cursor: "pointer",
+                    fontSize: 12,
+                    textDecoration: "underline",
+                  }}
+                >
+                  aggiorna
+                </button>
+              )}
+            </div>
+          )}
+
+          <button
+            type="button"
+            className="admin-logout-btn"
+            onClick={() => fetchDashboardData({ silent: false })}
+            style={{ opacity: 0.9 }}
+            title="Aggiorna dati"
+          >
+            Aggiorna
+          </button>
+
+          <button type="button" className="admin-logout-btn" onClick={handleLogout}>
+            Esci
+          </button>
+        </div>
       </div>
 
       {validation && (
@@ -555,20 +657,20 @@ export default function AdminDashboard() {
             <div className="admin-th admin-th-int">Interessato?</div>
           </div>
 
-          <div className="admin-table-body">
-            {surveys.map((s, index) => {
-              const rowId = `admin-row-${index}`;
-              const showScore = typeof s.normalizedInterestScore === "number" ? s.normalizedInterestScore : "-";
-              const isInterested = !!s.normalizedIsInterested;
+            <div className="admin-table-body">
+              {surveys.map((s, index) => {
+                const rowId = `admin-row-${index}`;
+                const showScore = typeof s.normalizedInterestScore === "number" ? s.normalizedInterestScore : "-";
+                const isInterested = !!s.normalizedIsInterested;
 
-              return (
-                <button
-                  key={rowId}
-                  id={rowId}
-                  type="button"
-                  className="admin-row"
-                  onClick={() => handleRowClick(s, rowId)}
-                >
+                return (
+                  <button
+                    key={rowId}
+                    id={rowId}
+                    type="button"
+                    className="admin-row"
+                    onClick={() => handleRowClick(s, rowId)}
+                  >
                 <div className="admin-td admin-td-email" title={s.email}>
   <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
     <div>{s.email || "-"}</div>
@@ -576,10 +678,14 @@ export default function AdminDashboard() {
     <span
       className={
         "admin-badge " +
-        (s.isEmailSubscribed ? "admin-badge-subscribed" : "admin-badge-survey")
+        ((s.isEmailSubscribed || s.email_subscribed || s.emailSubscribed)
+          ? "admin-badge-subscribed"
+          : "admin-badge-survey")
       }
     >
-      {s.isEmailSubscribed ? "Sondaggio + iscrizione" : "Solo sondaggio"}
+      {(s.isEmailSubscribed || s.email_subscribed || s.emailSubscribed)
+        ? "Sondaggio + iscrizione"
+        : "Solo sondaggio"}
     </span>
   </div>
 </div>
