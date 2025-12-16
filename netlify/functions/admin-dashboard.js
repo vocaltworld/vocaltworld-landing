@@ -70,27 +70,18 @@ exports.handler = async (event) => {
     const base = SUPABASE_URL.replace(/\/$/, "");
 
     // ✅ Colonne REALI in tabella (snake_case)
-    // NOTA: non selezioniamo campi che NON esistono (es. interestScore/createdAt camelCase)
-    const select = [
-      "id",
-      "email",
-      "created_at",
-      "survey_completed",
-      "survey_completed_at",
-      "email_subscribed",
-      "email_subscribed_at",
-      "score",
-      "interest_score",
-      "is_interested",
-      "answers",
-      "source",
-    ].join(",");
+    // NOTA: non referenziare MAI campi camelCase (es. interestScore / createdAt) perché in Postgres non esistono.
+    const select =
+      "id,email,created_at,survey_completed,survey_completed_at,email_subscribed,email_subscribed_at,score,interest_score,is_interested,answers,source";
 
-    const endpoint =
-      `${base}/rest/v1/${encodeURIComponent(SUPABASE_TABLE)}` +
-      `?select=${encodeURIComponent(select)}` +
-      `&order=created_at.desc.nullslast` +
-      `&limit=${limit}`;
+    // Costruiamo l’URL in modo safe (evita encoding strani e ci assicura che NON compaiano campi sbagliati)
+    const url = new URL(`${base}/rest/v1/${SUPABASE_TABLE}`);
+    url.searchParams.set("select", select);
+    url.searchParams.set("order", "created_at.desc.nullslast");
+    url.searchParams.set("limit", String(limit));
+
+    const endpoint = url.toString();
+    console.log("[admin-dashboard] Supabase endpoint:", endpoint);
 
     const res = await fetch(endpoint, {
       method: "GET",
@@ -122,7 +113,7 @@ exports.handler = async (event) => {
 
     // ✅ Normalizzazione verso lo shape che usa la dashboard (camelCase + campi coerenti)
     const surveys = rows.map((r) => {
-      const normalizedScore = safeNumber(r?.score ?? r?.interest_score);
+      const normalizedScore = safeNumber(r?.score ?? r?.interest_score ?? r?.interestScore);
 
       const normalizedIsInterested =
         typeof r?.is_interested === "boolean"
