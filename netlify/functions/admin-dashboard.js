@@ -117,8 +117,9 @@ exports.handler = async (event) => {
       return {
         email: r.email || "-",
         createdAt: r.created_at || null,
-        surveyCompleted: !!r.survey_completed,
+        surveyCompleted:  !!r.email_subscribed,
         surveyCompletedAt: r.survey_completed_at || r.created_at || null,
+        surveyCompleted: !!r.survey_completed,
 
         // 🔥 questo è quello che ti serve per togliere "Solo sondaggio"
         isEmailSubscribed: !!r.email_subscribed,
