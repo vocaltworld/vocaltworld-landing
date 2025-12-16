@@ -20,7 +20,16 @@ exports.handler = async (event) => {
 
     // ✅ secret anti-abuso (mettila su Netlify env)
     const WEBHOOK_SECRET = String(process.env.KLAVIYO_WEBHOOK_SECRET || "").trim();
-    const provided = getHeader(event.headers, "x-webhook-secret").trim();
+
+    // ✅ Accetta più nomi header (Klaviyo UI a volte tronca/varia)
+    const provided = (
+      getHeader(event.headers, "x-webhook-secret") ||
+      getHeader(event.headers, "x-klaviyo-webhook-secret") ||
+      getHeader(event.headers, "klaviyo-webhook-secret") ||
+      getHeader(event.headers, "klaviyo_webhook_secret") ||
+      getHeader(event.headers, "klaviyo-webhook-sec") ||
+      getHeader(event.headers, "klaviyo_webhook_sec")
+    ).trim();
 
     if (!WEBHOOK_SECRET || provided !== WEBHOOK_SECRET) {
       return json(401, { ok: false, error: "Unauthorized" });
@@ -32,8 +41,26 @@ exports.handler = async (event) => {
       return json(500, { ok: false, error: "Missing SUPABASE_URL or SUPABASE_SERVICE_ROLE_KEY" });
     }
 
-    const payload = event.body ? JSON.parse(event.body) : {};
-    const email = String(payload.email || payload?.data?.email || "").trim().toLowerCase();
+    let payload = {};
+    try {
+      payload = event.body ? JSON.parse(event.body) : {};
+    } catch {
+      payload = {};
+    }
+
+    // ✅ Klaviyo può mandare email in vari path
+    const rawEmail =
+      payload?.email ||
+      payload?.data?.email ||
+      payload?.person?.email ||
+      payload?.profile?.email ||
+      payload?.data?.person?.email ||
+      payload?.data?.profile?.email ||
+      payload?.data?.attributes?.email ||
+      payload?.data?.profile?.attributes?.email ||
+      "";
+
+    const email = String(rawEmail || "").trim().toLowerCase();
     if (!email) return json(400, { ok: false, error: "Missing email" });
 
     // ✅ aggiorna SOLO l’ultimo record di quell’email (quello più recente)
@@ -41,7 +68,7 @@ exports.handler = async (event) => {
     // Facciamo 2 step: 1) prendo l’ultimo id  2) update by id
     const listEndpoint =
       `${SUPABASE_URL}/rest/v1/${SUPABASE_TABLE}` +
-      `?select=id&email=eq.${encodeURIComponent(email)}` +
+      `?select=id&email=ilike.${encodeURIComponent(email)}` +
       `&order=created_at.desc&limit=1`;
 
     const listRes = await fetch(listEndpoint, {
