@@ -76,6 +76,12 @@ function pick(obj, key, fallback = undefined) {
  * - unifica campi e calcola Interested = score >= 6
  */
 function getEmailSubscribed(raw) {
+  // ✅ Priorità 0: se il backend (Netlify Function) ci passa già il boolean, usalo.
+  // (admin-dashboard.js restituisce `isEmailSubscribed` in camelCase)
+  if (typeof raw?.isEmailSubscribed === "boolean") return raw.isEmailSubscribed;
+  if (typeof raw?.email_subscribed === "boolean") return raw.email_subscribed;
+  if (typeof raw?.emailSubscribed === "boolean") return raw.emailSubscribed;
+
   // ✅ Priorità 1: consenso esplicito Klaviyo (spesso arriva in raw.answers.$consent)
   const rawAnswers = raw?.answers && typeof raw.answers === "object" ? raw.answers : {};
   const consentArr =
@@ -88,15 +94,12 @@ function getEmailSubscribed(raw) {
     if (consentArr.map((x) => String(x).toLowerCase()).includes("email")) return true;
   }
 
-  // Priorità 2: stato subscription (alcuni export lo mettono qui)
+  // ✅ Priorità 2: stato subscription (alcuni export lo mettono qui)
   const status1 = raw?.subscriptions?.email?.marketing?.status; // "SUBSCRIBED"
   const status2 = raw?.subscriptions?.email?.status; // alternativa
   const status3 = raw?.email_status; // alternativa custom
-  const status4 = raw?.emailSubscribed; // boolean custom
 
   const status = (status1 || status2 || status3 || "").toString().toUpperCase();
-
-  if (typeof status4 === "boolean") return status4;
   if (status === "SUBSCRIBED") return true;
 
   return false;
