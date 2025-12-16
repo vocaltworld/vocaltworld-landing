@@ -238,6 +238,17 @@ export default function AdminDashboard() {
   const [selectedSurvey, setSelectedSurvey] = useState(null);
   const [lastRowId, setLastRowId] = useState(null);
 
+  // Polling silenzioso (senza refresh pagina) + mantenimento selezione dettaglio
+  const pollingRef = useRef(null);
+  const selectedKeyRef = useRef(null);
+
+  // Chiave stabile per ritrovare lo stesso record dopo un refresh dei dati
+  const getSurveyKey = (s) => {
+    const email = String(s?.email || "").toLowerCase();
+    const ts = s?.createdAt || s?.surveyCompletedAt || s?.date || "";
+    return `${email}__${ts}`;
+  };
+
   const [adminKey, setAdminKey] = useState(() => {
     if (typeof window === "undefined") return "";
     return window.localStorage.getItem("vt_admin_key") || "";
@@ -305,77 +316,96 @@ export default function AdminDashboard() {
 
   const detailRef = useRef(null);
 
+  async function fetchDashboardData({ silent = false } = {}) {
+    try {
+      if (!silent) setLoading(true);
+      if (!silent) setError("");
+
+      const res = await fetch("/.netlify/functions/admin-dashboard", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "x-admin-key": adminKey || "",
+        },
+        body: JSON.stringify({ secret: adminKey || "" }),
+      });
+
+      if (res.status === 401) {
+        setError("Codice segreto non valido.");
+        setIsAuth(false);
+        if (typeof window !== "undefined") window.localStorage.removeItem("vt_admin_key");
+        if (!silent) setLoading(false);
+        return;
+      }
+
+      if (!res.ok) throw new Error("Errore nel caricamento dei dati (" + res.status + ")");
+
+      const data = await res.json();
+
+      let nextSurveys = data.surveys || data.responses || [];
+      if (!Array.isArray(nextSurveys)) nextSurveys = [];
+
+      nextSurveys = nextSurveys.map(normalizeSurvey);
+
+      nextSurveys = [...nextSurveys].sort((a, b) => {
+        const da = new Date(a.createdAt || a.surveyCompletedAt || a.date || 0).getTime();
+        const db = new Date(b.createdAt || b.surveyCompletedAt || b.date || 0).getTime();
+        return db - da;
+      });
+
+      setSurveys(nextSurveys);
+
+      // Se stavi guardando un dettaglio, mantieni la selezione e aggiorna i dati
+      if (selectedKeyRef.current) {
+        const found = nextSurveys.find((s) => getSurveyKey(s) === selectedKeyRef.current);
+        if (found) setSelectedSurvey(found);
+      }
+
+      const total = nextSurveys.length;
+      const interestedCount = nextSurveys.filter((s) => !!s.normalizedIsInterested).length;
+      const notInterestedCount = total - interestedCount;
+
+      const interestedPercent = total ? Math.round((interestedCount / total) * 100) : 0;
+      const notInterestedPercent = total ? Math.round((notInterestedCount / total) * 100) : 0;
+
+      setStats({
+        total,
+        interested: interestedCount,
+        interestedPercent,
+        notInterested: notInterestedCount,
+        notInterestedPercent,
+      });
+    } catch (err) {
+      // In modalità silent non "sporchiamo" la UI con errori
+      if (!silent) setError(err?.message || "Errore inatteso");
+    } finally {
+      if (!silent) setLoading(false);
+    }
+  }
+
   useEffect(() => {
     if (!isAuth) return;
 
-    async function load() {
-      try {
-        setLoading(true);
-        setError("");
+    // primo load “normale”
+    fetchDashboardData({ silent: false });
 
-        const res = await fetch("/.netlify/functions/admin-dashboard", {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            "x-admin-key": adminKey|| "",
-          },
-          body: JSON.stringify({ secret: adminKey || "" }),
-        });
+    // polling ogni 30 secondi “silenzioso” (nessun refresh pagina)
+    pollingRef.current = setInterval(() => {
+      // se tab non è visibile, non sprechiamo chiamate
+      if (typeof document !== "undefined" && document.hidden) return;
+      fetchDashboardData({ silent: true });
+    }, 30000);
 
-        if (res.status === 401) {
-          setError("Codice segreto non valido.");
-          setIsAuth(false);
-          if (typeof window !== "undefined") window.localStorage.removeItem("vt_admin_key");
-          setLoading(false);
-          return;
-        }
-
-        if (!res.ok) {
-          throw new Error("Errore nel caricamento dei dati (" + res.status + ")");
-        }
-
-        const data = await res.json();
-
-        let nextSurveys = data.surveys || data.responses || [];
-        if (!Array.isArray(nextSurveys)) nextSurveys = [];
-
-        nextSurveys = nextSurveys.map(normalizeSurvey);
-
-        nextSurveys = [...nextSurveys].sort((a, b) => {
-          const da = new Date(a.createdAt || a.surveyCompletedAt || a.date || 0).getTime();
-          const db = new Date(b.createdAt || b.surveyCompletedAt || b.date || 0).getTime();
-          return db - da;
-        });
-
-        setSurveys(nextSurveys);
-
-        const total = nextSurveys.length;
-        const interestedCount = nextSurveys.filter((s) => !!s.normalizedIsInterested).length;
-        const notInterestedCount = total - interestedCount;
-
-        const interestedPercent = total ? Math.round((interestedCount / total) * 100) : 0;
-        const notInterestedPercent = total ? Math.round((notInterestedCount / total) * 100) : 0;
-
-        setStats({
-          total,
-          interested: interestedCount,
-          interestedPercent,
-          notInterested: notInterestedCount,
-          notInterestedPercent,
-        });
-      } catch (err) {
-        setError(err?.message || "Errore inatteso");
-      } finally {
-        setLoading(false);
-      }
-    }
-
-    load();
+    return () => {
+      if (pollingRef.current) clearInterval(pollingRef.current);
+      pollingRef.current = null;
+    };
   }, [isAuth, adminKey]);
 
   const handleRowClick = (survey, rowId) => {
     setSelectedSurvey(survey);
     setLastRowId(rowId);
+    selectedKeyRef.current = getSurveyKey(survey);
 
     setTimeout(() => {
       if (detailRef.current) detailRef.current.scrollIntoView({ behavior: "smooth", block: "start" });
@@ -384,6 +414,7 @@ export default function AdminDashboard() {
 
   const handleCloseDetails = () => {
     setSelectedSurvey(null);
+    selectedKeyRef.current = null;
 
     setTimeout(() => {
       if (!lastRowId) return;
@@ -404,6 +435,7 @@ export default function AdminDashboard() {
     setStats(null);
     setSurveys([]);
     setSelectedSurvey(null);
+    selectedKeyRef.current = null;
     setLastRowId(null);
     setError("");
   };
