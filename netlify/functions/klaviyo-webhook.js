@@ -32,6 +32,7 @@ exports.handler = async (event) => {
     // ✅ Accetta più nomi header (Klaviyo UI a volte tronca/varia)
     const headerProvided = (
       getHeader(event.headers, "x-webhook-secret") ||
+      getHeader(event.headers, "KLAVIYO_WEBHOOK_SECRET") ||
       getHeader(event.headers, "x-klaviyo-webhook-secret") ||
       getHeader(event.headers, "klaviyo-webhook-secret") ||
       getHeader(event.headers, "klaviyo_webhook_secret") ||
@@ -49,7 +50,20 @@ exports.handler = async (event) => {
     const provided = (headerProvided || bodyProvided).trim();
 
     if (!WEBHOOK_SECRET || !provided || provided !== WEBHOOK_SECRET) {
-      return json(401, { ok: false, error: "Unauthorized" });
+      return json(401, {
+        ok: false,
+        error: "Unauthorized",
+        hint:
+          "Secret mismatch. Ensure Netlify env KLAVIYO_WEBHOOK_SECRET matches exactly what you send (header x-webhook-secret OR body.secret).",
+      });
+    }
+
+    // ✅ ENV SUPABASE (necessari per aggiornare il DB)
+    const SUPABASE_URL = String(process.env.SUPABASE_URL || "").trim();
+    const SERVICE_KEY = String(process.env.SUPABASE_SERVICE_ROLE_KEY || "").trim();
+
+    if (!SUPABASE_URL || !SERVICE_KEY) {
+      return json(500, { ok: false, error: "Missing SUPABASE_URL or SUPABASE_SERVICE_ROLE_KEY" });
     }
 
     // ✅ Klaviyo può mandare email in vari path
@@ -72,7 +86,7 @@ exports.handler = async (event) => {
     // Facciamo 2 step: 1) prendo l’ultimo id  2) update by id
     const listEndpoint =
       `${SUPABASE_URL}/rest/v1/${SUPABASE_TABLE}` +
-      `?select=id&email=ilike.${encodeURIComponent(email)}` +
+      `?select=id&email=eq.${encodeURIComponent(email)}` +
       `&order=created_at.desc&limit=1`;
 
     const listRes = await fetch(listEndpoint, {
