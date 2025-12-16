@@ -1,11 +1,13 @@
 [build]
+base = "client"
 command = "npm run build"
-publish = "client/dist"
+publish = "dist"
 
 [functions]
-directory = "netlify/functions"
+directory = "../netlify/functions"
+
 [dev]
-  command = "npm run dev"
-  port = 3999
-  targetPort = 5173
-  framework = "vite"
+command = "npm run dev"
+port = 3999
+targetPort = 5173
+framework = "vite"
