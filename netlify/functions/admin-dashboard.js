@@ -69,8 +69,8 @@ exports.handler = async (event) => {
     // Normalizziamo URL (niente doppio //)
     const base = SUPABASE_URL.replace(/\/$/, "");
 
-    // ✅ NB: colonne reali della tabella (snake_case)
-    // - created_at, survey_completed_at, interest_score, is_interested, email_subscribed, answers, ecc.
+    // ✅ Colonne REALI in tabella (snake_case)
+    // NOTA: non selezioniamo campi che NON esistono (es. interestScore/createdAt camelCase)
     const select = [
       "id",
       "email",
@@ -144,7 +144,8 @@ exports.handler = async (event) => {
         isInterested: normalizedIsInterested,
         isEmailSubscribed,
         // campi extra utili
-        surveyCompleted: typeof r?.survey_completed === "boolean" ? r.survey_completed : null,
+        surveyCompleted:
+          typeof r?.survey_completed === "boolean" ? r.survey_completed : null,
         emailSubscribedAt: r?.email_subscribed_at || null,
         source: r?.source ?? null,
       };
