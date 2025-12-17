@@ -1,16 +1,33 @@
 <!doctype html>
-<html lang="en">
+<html lang="it">
   <head>
     <meta charset="UTF-8" />
-    <link rel="icon" type="image/svg+xml" href="/vite.svg" />
+
+    <!-- Favicon -->
+    <link rel="icon" type="image/png" href="/logo-vtw.png" />
+    <link rel="apple-touch-icon" href="/logo-vtw.png" />
+
+    <!-- PWA -->
+    <link rel="manifest" href="/site.webmanifest" />
+
+    <!-- Meta -->
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>client</title>
+    <meta
+      name="description"
+      content="Survey ufficiale Vocal T World – validazione prodotto e lista di attesa."
+    />
+
+    <!-- Nome app -->
+    <meta name="application-name" content="Survey Vocal T World" />
+    <meta name="apple-mobile-web-app-title" content="Survey Vocal T World" />
+    <meta name="theme-color" content="#0b1020" />
+
+    <title>Survey Vocal T World</title>
   </head>
+
   <body>
     <div id="root"></div>
     <script type="module" src="/src/main.jsx"></script>
-
-    <!-- SCRIPT del form del sondaggio -->
     <script type="module" src="/src/survey-form.js"></script>
   </body>
 </html>
