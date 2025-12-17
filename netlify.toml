@@ -11,3 +11,8 @@ command = "npm run dev"
 port = 3999
 targetPort = 5173
 framework = "vite"
+[[redirects]]
+  from = "https://warm-meringue-f2f353.netlify.app/*"
+  to = "https://survey.vocaltworld.com/:splat"
+  status = 301
+  force = true
