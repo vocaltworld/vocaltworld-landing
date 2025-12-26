@@ -4,6 +4,7 @@ import ConceptSection from "./components/ConceptSection.jsx";
 import SurveyForm from "./components/SurveyForm.jsx";
 import Footer from "./components/Footer.jsx";
 import AdminDashboard from "./components/AdminDashboard.jsx";
+import VotePage from "./components/VotePage.jsx";
 import { BrowserRouter, Routes, Route } from "react-router-dom";
 
 export default function App() {
@@ -15,6 +16,12 @@ export default function App() {
         <Route
           path="/admin"
           element={<AdminDashboard />}
+        />
+
+        {/* MICRO VOTE PAGE — single-question vote with yes/no */}
+        <Route
+          path="/poll/:questionId"
+          element={<VotePage />}
         />
 
         {/* LANDING PAGE — exactly the same structure and style */}
