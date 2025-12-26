@@ -17,8 +17,29 @@ export default function VotePage() {
   const safeId = useMemo(() => (questionId || "").trim(), [questionId]);
 
   // Email passata da Klaviyo (link uguale per tutti ma email dinamica)
+  // Nota: in alcuni casi può arrivare url-encoded (anche 2 volte) o ancora come template non risolto.
   const emailFromUrl = useMemo(() => {
-    return (searchParams.get("e") || "").trim().toLowerCase();
+    let raw = (searchParams.get("e") || "").trim();
+
+    // Se per qualche motivo arriva ancora il template Klaviyo, trattalo come mancante
+    if (raw.includes("{{") || raw.includes("}}")) return "";
+
+    // Prova a decodificare (anche doppia-encoding)
+    for (let i = 0; i < 2; i++) {
+      try {
+        const decoded = decodeURIComponent(raw);
+        if (decoded === raw) break;
+        raw = decoded;
+      } catch {
+        break;
+      }
+    }
+
+    raw = raw.trim().toLowerCase();
+
+    // Sanity check base email (evita chiamate inutili al backend)
+    if (!raw || !raw.includes("@") || raw.length > 320) return "";
+    return raw;
   }, [searchParams]);
 
   // Pre-selezione scelta: ?c=1 o ?c=2 (opzionale)
@@ -114,13 +135,17 @@ export default function VotePage() {
         return;
       }
 
+      if (token) return;
+
       setTokenLoading(true);
       try {
-        const qs = new URLSearchParams({ question_id: safeId, email: emailFromUrl });
-        const res = await fetch(`/.netlify/functions/micro-poll-link?${qs.toString()}`, {
-          method: "GET",
-          headers: { "Content-Type": "application/json" },
+        const qs = new URLSearchParams({
+          question_id: safeId,
+          email: emailFromUrl,
+          format: "json",
         });
+
+        const res = await fetch(`/.netlify/functions/micro-poll-link?${qs.toString()}`);
 
         const data = await res.json().catch(() => ({}));
         if (!res.ok || !data?.token) {
