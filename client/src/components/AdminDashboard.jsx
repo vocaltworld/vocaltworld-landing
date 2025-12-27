@@ -269,6 +269,153 @@ export default function AdminDashboard() {
   const lastKeysRef = useRef(new Set());
   const [newItems, setNewItems] = useState(0);
   const [isSyncing, setIsSyncing] = useState(false);
+
+  // ---------------------------
+  // ✅ EXPORT CSV (pro)
+  // ---------------------------
+  const [isExportOpen, setIsExportOpen] = useState(false);
+  const [exportMain, setExportMain] = useState(true);
+  const [exportMicro, setExportMicro] = useState(true);
+
+  function pad2(n) {
+    return String(n).padStart(2, "0");
+  }
+
+  function isoDateForFile(d = new Date()) {
+    return `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}_${pad2(d.getHours())}${pad2(
+      d.getMinutes()
+    )}`;
+  }
+
+  function csvEscape(v) {
+    const s = (v ?? "").toString();
+    const escaped = s.replace(/"/g, '""');
+    if (/[;\n"]/g.test(escaped)) return `"${escaped}"`;
+    return escaped;
+  }
+
+  function rowsToCsv(rows, { delimiter = ";" } = {}) {
+    const lines = rows.map((r) => r.map(csvEscape).join(delimiter));
+    // BOM UTF-8 per Excel
+    return "\uFEFF" + lines.join("\n");
+  }
+
+  function downloadTextFile(filename, content, mime = "text/csv;charset=utf-8") {
+    const blob = new Blob([content], { type: mime });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
+  }
+
+  function buildMainDashboardCsv() {
+    const header = [
+      "email",
+      "data_compilazione",
+      "score",
+      "interessato",
+      "iscrizione_email",
+      "uso_principale",
+      "frequenza_uso",
+      "interesse_offline",
+      "fascia_prezzo",
+      "difficolta_comunicazione",
+      "soluzione_attuale",
+      "interesse_immediato_offline",
+      "note_extra",
+    ];
+
+    const body = (surveys || []).map((s) => [
+      displayEmail(s.email),
+      formatDate(s.createdAt || s.surveyCompletedAt || s.date),
+      typeof s.normalizedInterestScore === "number" ? s.normalizedInterestScore : "",
+      s.normalizedIsInterested ? "SI" : "NO",
+      s.isEmailSubscribed ? "SI" : "NO",
+      s.mainUseCase ?? "",
+      s.usageFrequency ?? "",
+      s.offlineInterest ?? "",
+      s.priceRange ?? "",
+      s.communicationDifficulty ?? "",
+      s.currentSolution ?? "",
+      s.instantOfflineInterest ?? "",
+      s.extraNote ?? "",
+    ]);
+
+    const summary = [
+      ["--- RIEPILOGO ---"],
+      ["totale", stats?.total ?? ""],
+      ["interessati", stats?.interested ?? ""],
+      ["interessati_percent", stats?.interestedPercent ?? ""],
+      ["non_interessati", stats?.notInterested ?? ""],
+      ["non_interessati_percent", stats?.notInterestedPercent ?? ""],
+    ];
+
+    const rows = [header, ...body, [""], ...summary];
+    return rowsToCsv(rows, { delimiter: ";" });
+  }
+
+  function buildMicroPollCsv({ question, rows, stats }) {
+    const qLabel = (question?.campaign_label || question?.campaign_key || "Micro-poll").toString();
+    const qText = (question?.question || "").toString();
+
+    const meta = [
+      ["--- MICRO-POLL ---"],
+      ["campagna", qLabel],
+      ["domanda", qText],
+      ["question_id", String(question?.id || "")],
+      [""],
+      ["totale_voti", stats?.total ?? ""],
+      ["si", stats?.yes ?? ""],
+      ["si_percent", stats?.pctYes ?? ""],
+      ["no", stats?.no ?? ""],
+      ["no_percent", stats?.pctNo ?? ""],
+      [""],
+    ];
+
+    const header = ["email", "data", "scelta"];
+    const body = (rows || []).map((r) => [
+      displayEmail(r.email),
+      formatDate(r.created_at || r.createdAt),
+      String(r.choice) === "1" ? "SI" : "NO",
+    ]);
+
+    return rowsToCsv([...meta, header, ...body], { delimiter: ";" });
+  }
+
+  async function doExport() {
+    try {
+      const stamp = isoDateForFile(new Date());
+
+      if (exportMain) {
+        const csv = buildMainDashboardCsv();
+        downloadTextFile(`vocaltworld_dashboard_${stamp}.csv`, csv);
+      }
+
+      if (exportMicro) {
+        const selectedQ = microQuestions.find(
+          (q) => String(q?.id || "") === String(microSelectedId || "")
+        );
+
+        const csv = buildMicroPollCsv({
+          question: selectedQ,
+          rows: microRows,
+          stats: microStats,
+        });
+
+        const qIdShort = String(microSelectedId || "micro").slice(0, 6);
+        downloadTextFile(`vocaltworld_micro_poll_${qIdShort}_${stamp}.csv`, csv);
+      }
+
+      setIsExportOpen(false);
+    } catch (e) {
+      setError(e?.message || "Errore export CSV");
+      setIsExportOpen(false);
+    }
+  }
   const renderMicroSection = () => {
     const selectedQ = microQuestions.find((q) => String(q?.id || "") === String(microSelectedId || ""));
     const selectedBase = (selectedQ?.campaign_label || selectedQ?.campaign_key || "Micro-poll").toString();
@@ -1057,6 +1204,19 @@ export default function AdminDashboard() {
           <button
             type="button"
             className="admin-logout-btn"
+            onClick={() => setIsExportOpen(true)}
+            style={{
+              opacity: 0.95,
+              background: "rgba(0, 122, 255, 0.14)",
+              border: "1px solid rgba(0, 122, 255, 0.30)",
+            }}
+            title="Esporta CSV"
+          >
+            ⬇︎ Export
+          </button>
+          <button
+            type="button"
+            className="admin-logout-btn"
             onClick={() => {
               setIsMicroOpen(true);
               setView("micro");
@@ -1088,6 +1248,93 @@ export default function AdminDashboard() {
           </button>
         </div>
       </div>
+
+      {isExportOpen && (
+        <div
+          style={{
+            position: "fixed",
+            inset: 0,
+            background: "rgba(0,0,0,0.55)",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            zIndex: 9999,
+            padding: 18,
+          }}
+          onClick={() => setIsExportOpen(false)}
+        >
+          <div
+            style={{
+              width: "min(620px, 96vw)",
+              borderRadius: 18,
+              border: "1px solid rgba(255,255,255,0.14)",
+              background: "rgba(10, 10, 14, 0.92)",
+              boxShadow: "0 20px 80px rgba(0,0,0,0.55)",
+              padding: 18,
+            }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12 }}>
+              <div>
+                <div style={{ fontSize: 16, fontWeight: 900 }}>Export dati (CSV)</div>
+                <div style={{ fontSize: 12, opacity: 0.75, marginTop: 4 }}>
+                  Seleziona cosa scaricare. I download partiranno separati (file distinti).
+                </div>
+              </div>
+
+              <button type="button" className="admin-logout-btn" onClick={() => setIsExportOpen(false)}>
+                Chiudi
+              </button>
+            </div>
+
+            <div style={{ marginTop: 14, display: "grid", gap: 10 }}>
+              <label style={{ display: "flex", gap: 10, alignItems: "center" }}>
+                <input type="checkbox" checked={exportMain} onChange={(e) => setExportMain(e.target.checked)} />
+                <div>
+                  <div style={{ fontWeight: 800 }}>Dashboard principale</div>
+                  <div style={{ fontSize: 12, opacity: 0.75 }}>Partecipanti + score + campi del sondaggio</div>
+                </div>
+              </label>
+
+              <label style={{ display: "flex", gap: 10, alignItems: "center" }}>
+                <input type="checkbox" checked={exportMicro} onChange={(e) => setExportMicro(e.target.checked)} />
+                <div>
+                  <div style={{ fontWeight: 800 }}>Micro-poll (Email 3 — Speaker)</div>
+                  <div style={{ fontSize: 12, opacity: 0.75 }}>Domanda selezionata + SI/NO + elenco risposte</div>
+                </div>
+              </label>
+
+              <div style={{ display: "flex", gap: 10, justifyContent: "flex-end", marginTop: 8 }}>
+                <button
+                  type="button"
+                  className="admin-logout-btn"
+                  onClick={() => {
+                    setExportMain(true);
+                    setExportMicro(true);
+                  }}
+                  style={{ opacity: 0.9 }}
+                >
+                  Seleziona tutto
+                </button>
+
+                <button
+                  type="button"
+                  className="admin-logout-btn"
+                  onClick={doExport}
+                  disabled={!exportMain && !exportMicro}
+                  style={{
+                    opacity: !exportMain && !exportMicro ? 0.5 : 1,
+                    background: "rgba(34, 197, 94, 0.18)",
+                    border: "1px solid rgba(34, 197, 94, 0.35)",
+                  }}
+                >
+                  Scarica
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
 
       {validation && (
         <section className={`validation-card validation-${validation.level}`}>
