@@ -255,7 +255,11 @@ export default function AdminDashboard() {
   const [microLoading, setMicroLoading] = useState(false);
   const [microError, setMicroError] = useState("");
   const microPollingRef = useRef(null);
-
+// ✅ Tenere SOLO il micro-poll ufficiale (Email 3 — Speaker) per evitare confusione
+// Se in futuro cambi domanda/ID, aggiorna qui.
+const MICRO_ALLOWED_IDS = new Set([
+  "76677bc6-ed40-4d1f-979b-3db101773611", // Email 3 — Speaker
+]);
   // Polling silenzioso (senza refresh pagina) + mantenimento selezione dettaglio
   const pollingRef = useRef(null);
   const selectedKeyRef = useRef(null);
@@ -440,35 +444,54 @@ export default function AdminDashboard() {
             justifyContent: "space-between",
           }}
         >
-          <div style={{ display: "flex", flexDirection: "column", gap: 6, minWidth: 320 }}>
-            <div style={{ fontWeight: 700, opacity: 0.9 }}>Seleziona domanda</div>
-            <select
-              value={microSelectedId}
-              onChange={(e) => setMicroSelectedId(e.target.value)}
-              style={{
-                padding: "10px 12px",
-                borderRadius: 12,
-                border: "1px solid rgba(255,255,255,0.14)",
-                background: "rgba(0,0,0,0.35)",
-                color: "#fff",
-                outline: "none",
-                maxWidth: 720,
-              }}
-            >
-              <option value="">-- scegli --</option>
-              {microQuestions.map((q) => {
-                const base = (q.campaign_label || q.campaign_key || "Micro-poll").toString();
-                const questionText = (q.question || "").toString().trim();
-                const shortId = String(q.id || "").slice(0, 6);
-                const label = `${base} — ${questionText || "Domanda"} (${shortId || "id"})`;
-                return (
-                  <option key={q.id} value={q.id}>
-                    {label}
-                  </option>
-                );
-              })}
-            </select>
-          </div>
+          {microQuestions.length <= 1 ? (
+            <div style={{ display: "flex", flexDirection: "column", gap: 6, minWidth: 320 }}>
+              <div style={{ fontWeight: 700, opacity: 0.9 }}>Domanda (Email 3 — Speaker)</div>
+              <div
+                style={{
+                  padding: "10px 12px",
+                  borderRadius: 12,
+                  border: "1px solid rgba(255,255,255,0.14)",
+                  background: "rgba(0,0,0,0.35)",
+                  color: "#fff",
+                  maxWidth: 720,
+                  lineHeight: 1.25,
+                }}
+              >
+                {selectedFullLabel || "—"}
+              </div>
+            </div>
+          ) : (
+            <div style={{ display: "flex", flexDirection: "column", gap: 6, minWidth: 320 }}>
+              <div style={{ fontWeight: 700, opacity: 0.9 }}>Seleziona domanda</div>
+              <select
+                value={microSelectedId}
+                onChange={(e) => setMicroSelectedId(e.target.value)}
+                style={{
+                  padding: "10px 12px",
+                  borderRadius: 12,
+                  border: "1px solid rgba(255,255,255,0.14)",
+                  background: "rgba(0,0,0,0.35)",
+                  color: "#fff",
+                  outline: "none",
+                  maxWidth: 720,
+                }}
+              >
+                <option value="">-- scegli --</option>
+                {microQuestions.map((q) => {
+                  const base = (q.campaign_label || q.campaign_key || "Micro-poll").toString();
+                  const questionText = (q.question || "").toString().trim();
+                  const shortId = String(q.id || "").slice(0, 6);
+                  const label = `${base} — ${questionText || "Domanda"} (${shortId || "id"})`;
+                  return (
+                    <option key={q.id} value={q.id}>
+                      {label}
+                    </option>
+                  );
+                })}
+              </select>
+            </div>
+          )}
 
           <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
             <button
@@ -785,20 +808,25 @@ export default function AdminDashboard() {
         return db - da;
       });
 
-      setMicroQuestions(sorted);
+      // ✅ Filtra: tieni SOLO l'ID ufficiale (Email 3 — Speaker)
+const filtered = sorted.filter((q) => MICRO_ALLOWED_IDS.has(String(q?.id || "")));
+const finalList = filtered.length > 0 ? filtered : sorted;
 
-      // Default selection: prima quella attiva, altrimenti la più recente
-      if (!microSelectedId) {
-        const firstActive = sorted.find((q) => q?.active) || sorted[0];
-        if (firstActive?.id) setMicroSelectedId(String(firstActive.id));
-      }
+setMicroQuestions(finalList);
 
-      // Se non troviamo nulla, avvisiamo chiaramente
-      if (sorted.length === 0) {
-        setMicroError(
-          "Nessuna domanda trovata nella tabella micro_questions. Controlla Supabase (tabella micro_questions)."
-        );
-      }
+// ✅ Selezione forzata: preferisci sempre la domanda ufficiale
+const preferred = finalList.find((q) => MICRO_ALLOWED_IDS.has(String(q?.id || "")));
+const firstActive = finalList.find((q) => q?.active) || finalList[0];
+const nextPick = preferred || firstActive;
+
+if (nextPick?.id) setMicroSelectedId(String(nextPick.id));
+
+// Se non troviamo nulla, avvisiamo chiaramente
+if (finalList.length === 0) {
+  setMicroError(
+    "Nessuna domanda trovata nella tabella micro_questions. Controlla Supabase (tabella micro_questions)."
+  );
+}
 
     } catch (e) {
       setMicroError(e?.message || "Errore inatteso micro-polls");
