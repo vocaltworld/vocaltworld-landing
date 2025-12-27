@@ -13,6 +13,12 @@ function formatDate(iso) {
   });
 }
 
+function displayEmail(v) {
+  const s = (v ?? "").toString().trim();
+  if (!s || s === "-") return "Anonimo";
+  return s;
+}
+
 function parseNumber(v) {
   if (typeof v === "number") return v;
   if (typeof v === "string" && v.trim() !== "" && !Number.isNaN(Number(v))) return Number(v);
@@ -238,14 +244,201 @@ export default function AdminDashboard() {
   const [selectedSurvey, setSelectedSurvey] = useState(null);
   const [lastRowId, setLastRowId] = useState(null);
 
+  // ---------------------------
+  // Micro-polls (mini sondaggi)
+  // ---------------------------
+  const [isMicroOpen, setIsMicroOpen] = useState(false);
+  const [microQuestions, setMicroQuestions] = useState([]);
+  const [microSelectedId, setMicroSelectedId] = useState("");
+  const [microStats, setMicroStats] = useState(null);
+  const [microRows, setMicroRows] = useState([]);
+  const [microLoading, setMicroLoading] = useState(false);
+  const [microError, setMicroError] = useState("");
+  const microPollingRef = useRef(null);
+
   // Polling silenzioso (senza refresh pagina) + mantenimento selezione dettaglio
   const pollingRef = useRef(null);
   const selectedKeyRef = useRef(null);
+
+  // ---------------------------
+  // View state for dashboard/micro-polls
+  // ---------------------------
+  const [view, setView] = useState("main"); // "main" | "micro"
 
   const lastFetchAtRef = useRef(0);
   const lastKeysRef = useRef(new Set());
   const [newItems, setNewItems] = useState(0);
   const [isSyncing, setIsSyncing] = useState(false);
+  const renderMicroSection = () => {
+    const selectedQ = microQuestions.find((q) => String(q?.id || "") === String(microSelectedId || ""));
+    const selectedBase = (selectedQ?.campaign_label || selectedQ?.campaign_key || "Micro-poll").toString();
+    const selectedQuestionText = (selectedQ?.question || "").toString().trim();
+    const selectedShortId = String(selectedQ?.id || "").slice(0, 6);
+    const selectedFullLabel = selectedQ
+      ? `${selectedBase} — ${selectedQuestionText || "Domanda"} (${selectedShortId || "id"})`
+      : "";
+
+    return (
+      <section className="admin-section" style={{ marginTop: 18 }}>
+        <h2 className="admin-subtitle">Micro-sondaggi (Email CTA)</h2>
+
+        {/* FILTRO DOMANDE (fuori dalla casella) */}
+        <div
+          style={{
+            marginTop: 10,
+            display: "flex",
+            flexWrap: "wrap",
+            gap: 10,
+            alignItems: "center",
+            justifyContent: "space-between",
+          }}
+        >
+          <div style={{ display: "flex", flexDirection: "column", gap: 6, minWidth: 320 }}>
+            <div style={{ fontWeight: 700, opacity: 0.9 }}>Seleziona domanda</div>
+            <select
+              value={microSelectedId}
+              onChange={(e) => setMicroSelectedId(e.target.value)}
+              style={{
+                padding: "10px 12px",
+                borderRadius: 12,
+                border: "1px solid rgba(255,255,255,0.14)",
+                background: "rgba(0,0,0,0.35)",
+                color: "#fff",
+                outline: "none",
+                maxWidth: 720,
+              }}
+            >
+              <option value="">-- scegli --</option>
+              {microQuestions.map((q) => {
+                const base = (q.campaign_label || q.campaign_key || "Micro-poll").toString();
+                const questionText = (q.question || "").toString().trim();
+                const shortId = String(q.id || "").slice(0, 6);
+                const label = `${base} — ${questionText || "Domanda"} (${shortId || "id"})`;
+                return (
+                  <option key={q.id} value={q.id}>
+                    {label}
+                  </option>
+                );
+              })}
+            </select>
+          </div>
+
+          <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
+            <button
+              type="button"
+              className="admin-logout-btn"
+              onClick={() => {
+                fetchMicroQuestions();
+                if (microSelectedId) fetchMicroResults(microSelectedId, { silent: false });
+              }}
+              title="Aggiorna micro-sondaggi"
+            >
+              Aggiorna
+            </button>
+
+            <button
+              type="button"
+              className="admin-logout-btn"
+              onClick={() => {
+                setIsMicroOpen(false);
+                setView("main");
+              }}
+              title="Chiudi"
+            >
+              Chiudi
+            </button>
+          </div>
+        </div>
+
+        <div className="admin-detail" style={{ padding: 16, marginTop: 14 }}>
+          {/* DOMANDA SELEZIONATA (mostrata dentro la casella) */}
+          {selectedFullLabel ? (
+            <div style={{ marginBottom: 10, fontWeight: 800, opacity: 0.92 }}>
+              {selectedFullLabel}
+            </div>
+          ) : (
+            <div style={{ marginBottom: 10, opacity: 0.75 }}>
+              Seleziona una domanda dal menu qui sopra.
+            </div>
+          )}
+
+          {microError && (
+            <div style={{ marginTop: 10 }}>
+              <p className="admin-error">Errore micro-polls: {microError}</p>
+            </div>
+          )}
+
+          {microSelectedId && microStats && (
+            <div className="admin-stats" style={{ marginTop: 12 }}>
+              <div className="admin-stat-card admin-stat-total">
+                <span className="admin-stat-label">Totale voti</span>
+                <span className="admin-stat-value">{microStats.total ?? 0}</span>
+              </div>
+
+              <div className="admin-stat-card admin-stat-yes">
+                <span className="admin-stat-label">Sì (1)</span>
+                <span className="admin-stat-value">
+                  {microStats.yes ?? 0}
+                  <span className="admin-stat-sub"> ({microStats.pctYes ?? 0}%)</span>
+                </span>
+              </div>
+
+              <div className="admin-stat-card admin-stat-no">
+                <span className="admin-stat-label">No (2)</span>
+                <span className="admin-stat-value">
+                  {microStats.no ?? 0}
+                  <span className="admin-stat-sub"> ({microStats.pctNo ?? 0}%)</span>
+                </span>
+              </div>
+            </div>
+          )}
+
+          {microSelectedId && (
+            <div style={{ marginTop: 14 }}>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10 }}>
+                <h3 style={{ margin: 0, fontSize: 14, opacity: 0.9 }}>Risposte (live)</h3>
+                <div style={{ fontSize: 12, opacity: 0.75 }}>
+                  {microLoading ? "Sincronizzo…" : "Aggiornamento automatico"}
+                </div>
+              </div>
+
+              <div className="admin-table" style={{ marginTop: 10 }}>
+                <div className="admin-table-header">
+                  <div className="admin-th admin-th-email">Email</div>
+                  <div className="admin-th admin-th-date">Data</div>
+                  <div className="admin-th admin-th-score">Scelta</div>
+                </div>
+
+                <div className="admin-table-body">
+                  {microRows.map((r, idx) => {
+                    const rowId = `micro-row-${idx}`;
+                    const choice = String(r.choice);
+                    return (
+                      <div key={rowId} className="admin-row" style={{ cursor: "default" }}>
+                        <div className="admin-td admin-td-email" title={r.email || ""}>
+                          {displayEmail(r.email)}
+                        </div>
+                        <div className="admin-td admin-td-date">{formatDate(r.created_at || r.createdAt)}</div>
+                        <div className="admin-td admin-td-score">
+                          <span className={"admin-pill " + (choice === "1" ? "admin-pill-yes" : "admin-pill-no")}>
+                            {choice === "1" ? "SI" : "NO"}
+                          </span>
+                        </div>
+                      </div>
+                    );
+                  })}
+
+                  {microRows.length === 0 && (
+                    <div className="admin-table-empty">Nessuna risposta registrata per questa domanda.</div>
+                  )}
+                </div>
+              </div>
+            </div>
+          )}
+        </div>
+      </section>
+    );
+  };
 
   // Chiave stabile per ritrovare lo stesso record dopo un refresh dei dati
   const getSurveyKey = (s) => {
@@ -327,6 +520,83 @@ export default function AdminDashboard() {
   }, [stats]);
 
   const detailRef = useRef(null);
+
+  async function fetchMicroQuestions() {
+    try {
+      setMicroError("");
+      setMicroLoading(true);
+
+      const res = await fetch("/.netlify/functions/admin-micro-polls?mode=questions", {
+        method: "GET",
+        headers: {
+          "Content-Type": "application/json",
+          "x-admin-key": adminKey || "",
+        },
+      });
+
+      if (res.status === 401) {
+        setMicroError("Codice segreto non valido (micro-polls).");
+        return;
+      }
+
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok || !data?.ok) {
+        throw new Error(data?.error || "Errore nel caricamento micro-polls");
+      }
+
+      const list = Array.isArray(data.questions) ? data.questions : [];
+      setMicroQuestions(list);
+
+      // Se non c'è una selezione, scegliamo la più recente attiva
+      if (!microSelectedId) {
+        const firstActive = list.find((q) => q?.active) || list[0];
+        if (firstActive?.id) setMicroSelectedId(String(firstActive.id));
+      }
+    } catch (e) {
+      setMicroError(e?.message || "Errore inatteso micro-polls");
+    } finally {
+      setMicroLoading(false);
+    }
+  }
+
+  async function fetchMicroResults(questionId, { silent = false } = {}) {
+    if (!questionId) return;
+
+    try {
+      if (!silent) {
+        setMicroLoading(true);
+        setMicroError("");
+      }
+
+      const res = await fetch(
+        `/.netlify/functions/admin-micro-polls?mode=results&question_id=${encodeURIComponent(questionId)}`,
+        {
+          method: "GET",
+          headers: {
+            "Content-Type": "application/json",
+            "x-admin-key": adminKey || "",
+          },
+        }
+      );
+
+      if (res.status === 401) {
+        if (!silent) setMicroError("Codice segreto non valido (micro-polls).");
+        return;
+      }
+
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok || !data?.ok) {
+        throw new Error(data?.error || "Errore nel caricamento risultati");
+      }
+
+      setMicroStats(data.stats || null);
+      setMicroRows(Array.isArray(data.rows) ? data.rows : []);
+    } catch (e) {
+      if (!silent) setMicroError(e?.message || "Errore inatteso risultati");
+    } finally {
+      if (!silent) setMicroLoading(false);
+    }
+  }
 
   async function fetchDashboardData({ silent = false } = {}) {
     // Evita richieste troppo ravvicinate (anti-thrashing)
@@ -416,6 +686,7 @@ export default function AdminDashboard() {
 
     // primo load “normale”
     fetchDashboardData({ silent: false });
+    fetchMicroQuestions();
 
     // polling ogni 15 secondi “silenzioso” (nessun refresh pagina)
     pollingRef.current = setInterval(() => {
@@ -424,13 +695,22 @@ export default function AdminDashboard() {
       fetchDashboardData({ silent: true });
     }, 15000);
 
+    // polling leggero micro-polls (solo se c'è una domanda selezionata)
+    microPollingRef.current = setInterval(() => {
+      if (typeof document !== "undefined" && document.hidden) return;
+      if (!microSelectedId) return;
+      fetchMicroResults(microSelectedId, { silent: true });
+    }, 8000);
+
     const onFocus = () => {
       fetchDashboardData({ silent: true });
+      if (microSelectedId) fetchMicroResults(microSelectedId, { silent: true });
     };
 
     const onVisibility = () => {
       if (typeof document !== "undefined" && !document.hidden) {
         fetchDashboardData({ silent: true });
+        if (microSelectedId) fetchMicroResults(microSelectedId, { silent: true });
       }
     };
 
@@ -440,10 +720,21 @@ export default function AdminDashboard() {
     return () => {
       if (pollingRef.current) clearInterval(pollingRef.current);
       pollingRef.current = null;
+
+      if (microPollingRef.current) clearInterval(microPollingRef.current);
+      microPollingRef.current = null;
+
       if (typeof window !== "undefined") window.removeEventListener("focus", onFocus);
       if (typeof document !== "undefined") document.removeEventListener("visibilitychange", onVisibility);
     };
-  }, [isAuth, adminKey]);
+  }, [isAuth, adminKey, microSelectedId]);
+
+  useEffect(() => {
+    if (!isAuth) return;
+    if (!microSelectedId) return;
+    fetchMicroResults(microSelectedId, { silent: false });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [microSelectedId, isAuth]);
 
   const handleRowClick = (survey, rowId) => {
     setSelectedSurvey(survey);
@@ -536,6 +827,57 @@ export default function AdminDashboard() {
     );
   }
 
+  if (view === "micro") {
+    return (
+      <div className="admin-page">
+        <div className="admin-header">
+          <div className="admin-header-left">
+            <h1 className="admin-title">Micro-sondaggi</h1>
+            <p style={{ margin: "6px 0 0 0", opacity: 0.85 }}>Filtra per campagna e vedi SI/NO in tempo reale.</p>
+          </div>
+
+          <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
+            <button
+              type="button"
+              className="admin-logout-btn"
+              onClick={() => {
+                setView("main");
+                setIsMicroOpen(false);
+              }}
+              style={{
+                opacity: 0.95,
+                background: "rgba(0, 122, 255, 0.20)",
+                border: "1px solid rgba(0, 122, 255, 0.40)",
+              }}
+              title="Torna alla dashboard"
+            >
+              ← Dashboard
+            </button>
+
+            <button
+              type="button"
+              className="admin-logout-btn"
+              onClick={() => {
+                fetchMicroQuestions();
+                if (microSelectedId) fetchMicroResults(microSelectedId, { silent: false });
+              }}
+              style={{ opacity: 0.9 }}
+              title="Aggiorna micro-polls"
+            >
+              Aggiorna
+            </button>
+
+            <button type="button" className="admin-logout-btn" onClick={handleLogout}>
+              Esci
+            </button>
+          </div>
+        </div>
+
+        {renderMicroSection()}
+      </div>
+    );
+  }
+
   return (
     <div className="admin-page">
       <div className="admin-header">
@@ -598,6 +940,25 @@ export default function AdminDashboard() {
           <button
             type="button"
             className="admin-logout-btn"
+            onClick={() => {
+              setIsMicroOpen(true);
+              setView("micro");
+              // al primo click, se non abbiamo ancora caricato, ricarichiamo
+              if (!microQuestions || microQuestions.length === 0) fetchMicroQuestions();
+            }}
+            style={{
+              opacity: 0.95,
+              background: "rgba(0, 122, 255, 0.20)",
+              border: "1px solid rgba(0, 122, 255, 0.40)",
+            }}
+            title="Apri micro-sondaggi"
+          >
+            ☰ Micro
+          </button>
+
+          <button
+            type="button"
+            className="admin-logout-btn"
             onClick={() => fetchDashboardData({ silent: false })}
             style={{ opacity: 0.9 }}
             title="Aggiorna dati"
@@ -646,6 +1007,8 @@ export default function AdminDashboard() {
         </div>
       )}
 
+      {isMicroOpen && renderMicroSection()}
+
       <section className="admin-section">
         <h2 className="admin-subtitle">Elenco partecipanti</h2>
 
@@ -673,7 +1036,7 @@ export default function AdminDashboard() {
                   >
                 <div className="admin-td admin-td-email" title={s.email}>
   <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-    <div>{s.email || "-"}</div>
+    <div>{displayEmail(s.email)}</div>
 
     <span
       className={
@@ -721,7 +1084,7 @@ export default function AdminDashboard() {
             </div>
 
             <p className="admin-detail-meta">
-              <strong>Email:</strong> {selectedSurvey.email || "-"}
+              <strong>Email:</strong> {displayEmail(selectedSurvey.email)}
               <br />
               <strong>Data compilazione:</strong> {formatDate(selectedSurvey.createdAt || selectedSurvey.surveyCompletedAt || selectedSurvey.date)}
             </p>
