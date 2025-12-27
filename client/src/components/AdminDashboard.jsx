@@ -523,28 +523,41 @@ export default function AdminDashboard() {
 
   // ---------------------------
   // API helper (Netlify /api/* -> Functions)
-  // - A volte, se i redirect non matchano, Netlify risponde con HTML (index.html)
-  // - Questa helper intercetta il caso e (per admin-dashboard) fa fallback GET se serve.
+  // - In prod vogliamo chiamare SEMPRE /api/* (redirect -> functions)
+  // - Se il routing /api non è allineato, Netlify risponde con HTML (index.html)
+  //   e qui facciamo fallback automatico su /.netlify/functions/*
   // ---------------------------
-  async function apiFetchJson(path, { method = "GET", body } = {}) {
+  function toFunctionsPath(apiPath) {
+    // "/api/admin-dashboard" -> "/.netlify/functions/admin-dashboard"
+    return apiPath.replace(/^\/api\//, "/.netlify/functions/");
+  }
+
+  async function fetchJsonWithFallback(apiPath, { method = "GET", body, headers: extraHeaders } = {}) {
     const headers = {
       "Content-Type": "application/json",
       "x-admin-key": adminKey || "",
+      ...(extraHeaders || {}),
     };
 
-    const opts = {
-      method,
-      headers,
-    };
-
+    const opts = { method, headers };
     if (body !== undefined && method !== "GET") {
       opts.body = typeof body === "string" ? body : JSON.stringify(body);
     }
 
-    const res = await fetch(path, opts);
+    // 1) Proviamo /api/*
+    let res = await fetch(apiPath, opts);
+    let ct = (res.headers.get("content-type") || "").toLowerCase();
 
-    // Se per qualche motivo arriva HTML (fallback SPA), lo segnaliamo subito.
-    const ct = (res.headers.get("content-type") || "").toLowerCase();
+    // Se arriva HTML o un 404 SPA-like, fallback su /.netlify/functions/*
+    const looksLikeSpaHtml = ct.includes("text/html");
+    const shouldFallback = looksLikeSpaHtml;
+
+    if (shouldFallback) {
+      const fnPath = toFunctionsPath(apiPath);
+      res = await fetch(fnPath, opts);
+      ct = (res.headers.get("content-type") || "").toLowerCase();
+    }
+
     if (ct.includes("text/html")) {
       const err = new Error(
         "Routing /api non allineato: sto ricevendo HTML invece di JSON. Controlla netlify.toml (redirect /api/* prima di /*)."
@@ -563,12 +576,8 @@ export default function AdminDashboard() {
       setMicroError("");
       setMicroLoading(true);
 
-      const res = await fetch("/api/admin-micro-polls?mode=questions", {
+      const { res, data } = await fetchJsonWithFallback("/api/admin-micro-polls?mode=questions", {
         method: "GET",
-        headers: {
-          "Content-Type": "application/json",
-          "x-admin-key": adminKey || "",
-        },
       });
 
       if (res.status === 401) {
@@ -576,48 +585,47 @@ export default function AdminDashboard() {
         return;
       }
 
-      const data = await res.json().catch(() => ({}));
       if (!res.ok || !data?.ok) {
         throw new Error(data?.error || "Errore nel caricamento micro-polls");
       }
 
-   const list = Array.isArray(data.questions) ? data.questions : [];
+      const list = Array.isArray(data.questions) ? data.questions : [];
 
-// ✅ Per ora: mostriamo SOLO la campagna "Email 3 — Speaker"
-const onlyEmail3 = list
-  .filter((q) => {
-    const label = String(q?.campaign_label || q?.campaign_key || "").toLowerCase();
-    const question = String(q?.question || "").toLowerCase();
-    return (
-      label.includes("email 3") ||
-      label.includes("speaker") ||
-      question.includes("email 3") ||
-      question.includes("speaker")
-    );
-  })
-  // dedupe per id
-  .reduce((acc, q) => {
-    const id = String(q?.id || "");
-    if (!id) return acc;
-    if (acc.some((x) => String(x?.id || "") === id)) return acc;
-    acc.push(q);
-    return acc;
-  }, []);
+      // ✅ Per ora: mostriamo SOLO la campagna "Email 3 — Speaker"
+      const onlyEmail3 = list
+        .filter((q) => {
+          const label = String(q?.campaign_label || q?.campaign_key || "").toLowerCase();
+          const question = String(q?.question || "").toLowerCase();
+          return (
+            label.includes("email 3") ||
+            label.includes("speaker") ||
+            question.includes("email 3") ||
+            question.includes("speaker")
+          );
+        })
+        // dedupe per id
+        .reduce((acc, q) => {
+          const id = String(q?.id || "");
+          if (!id) return acc;
+          if (acc.some((x) => String(x?.id || "") === id)) return acc;
+          acc.push(q);
+          return acc;
+        }, []);
 
-setMicroQuestions(onlyEmail3);
+      setMicroQuestions(onlyEmail3);
 
-// Default selection (tra quelle filtrate)
-if (!microSelectedId) {
-  const firstActive = onlyEmail3.find((q) => q?.active) || onlyEmail3[0];
-  if (firstActive?.id) setMicroSelectedId(String(firstActive.id));
-}
+      // Default selection (tra quelle filtrate)
+      if (!microSelectedId) {
+        const firstActive = onlyEmail3.find((q) => q?.active) || onlyEmail3[0];
+        if (firstActive?.id) setMicroSelectedId(String(firstActive.id));
+      }
 
-// Se il filtro non trova nulla, avvisiamo chiaramente
-if (onlyEmail3.length === 0) {
-  setMicroError(
-    "Nessuna domanda trovata per Email 3 — Speaker. Controlla la tabella micro_questions (campaign_label/campaign_key) oppure rimuovi il filtro."
-  );
-}
+      // Se il filtro non trova nulla, avvisiamo chiaramente
+      if (onlyEmail3.length === 0) {
+        setMicroError(
+          "Nessuna domanda trovata per Email 3 — Speaker. Controlla la tabella micro_questions (campaign_label/campaign_key) oppure rimuovi il filtro."
+        );
+      }
 
     } catch (e) {
       setMicroError(e?.message || "Errore inatteso micro-polls");
@@ -635,15 +643,9 @@ if (onlyEmail3.length === 0) {
         setMicroError("");
       }
 
-      const res = await fetch(
+      const { res, data } = await fetchJsonWithFallback(
         `/api/admin-micro-polls?mode=results&question_id=${encodeURIComponent(questionId)}`,
-        {
-          method: "GET",
-          headers: {
-            "Content-Type": "application/json",
-            "x-admin-key": adminKey || "",
-          },
-        }
+        { method: "GET" }
       );
 
       if (res.status === 401) {
@@ -651,7 +653,6 @@ if (onlyEmail3.length === 0) {
         return;
       }
 
-      const data = await res.json().catch(() => ({}));
       if (!res.ok || !data?.ok) {
         throw new Error(data?.error || "Errore nel caricamento risultati");
       }
@@ -681,7 +682,7 @@ if (onlyEmail3.length === 0) {
       let data;
 
       try {
-        ({ res, data } = await apiFetchJson("/api/admin-dashboard", {
+        ({ res, data } = await fetchJsonWithFallback("/api/admin-dashboard", {
           method: "POST",
           body: { secret: adminKey || "" },
         }));
@@ -693,7 +694,7 @@ if (onlyEmail3.length === 0) {
 
       // Fallback GET se la function è stata implementata GET-only o se Netlify risponde 404 su POST
       if (res && res.status === 404) {
-        ({ res, data } = await apiFetchJson("/api/admin-dashboard", { method: "GET" }));
+        ({ res, data } = await fetchJsonWithFallback("/api/admin-dashboard", { method: "GET" }));
       }
 
       if (res.status === 401) {
