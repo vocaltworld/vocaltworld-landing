@@ -258,7 +258,7 @@ export default function AdminDashboard() {
 // ✅ Tenere SOLO il micro-poll ufficiale (Email 3 — Speaker) per evitare confusione
 // Se in futuro cambi domanda/ID, aggiorna qui.
 const MICRO_ALLOWED_IDS = new Set([
-  "f22df9bc-41a9-4b46-af8b-92d63e874610", // Email 3 — Speaker
+  "76677bc6-ed40-4d1f-979b-3db101773611", // Email 3 — Speaker
 ]);
   // Polling silenzioso (senza refresh pagina) + mantenimento selezione dettaglio
   const pollingRef = useRef(null);
