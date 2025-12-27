@@ -5,4 +5,8 @@
 /site.webmanifest /site.webmanifest 200
 /vite.svg /vite.svg 404
 
-/* /index.html 200
+# ✅ API sempre prima (IMPORTANTISSIMO)
+ /api/*  /.netlify/functions/:splat  200
+
+# ✅ SPA fallback (deve stare sotto)
+ /*  /index.html  200
