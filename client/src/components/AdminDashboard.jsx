@@ -544,14 +544,44 @@ export default function AdminDashboard() {
         throw new Error(data?.error || "Errore nel caricamento micro-polls");
       }
 
-      const list = Array.isArray(data.questions) ? data.questions : [];
-      setMicroQuestions(list);
+   const list = Array.isArray(data.questions) ? data.questions : [];
 
-      // Se non c'è una selezione, scegliamo la più recente attiva
-      if (!microSelectedId) {
-        const firstActive = list.find((q) => q?.active) || list[0];
-        if (firstActive?.id) setMicroSelectedId(String(firstActive.id));
-      }
+// ✅ Per ora: mostriamo SOLO la campagna "Email 3 — Speaker"
+const onlyEmail3 = list
+  .filter((q) => {
+    const label = String(q?.campaign_label || q?.campaign_key || "").toLowerCase();
+    const question = String(q?.question || "").toLowerCase();
+    return (
+      label.includes("email 3") ||
+      label.includes("speaker") ||
+      question.includes("email 3") ||
+      question.includes("speaker")
+    );
+  })
+  // dedupe per id
+  .reduce((acc, q) => {
+    const id = String(q?.id || "");
+    if (!id) return acc;
+    if (acc.some((x) => String(x?.id || "") === id)) return acc;
+    acc.push(q);
+    return acc;
+  }, []);
+
+setMicroQuestions(onlyEmail3);
+
+// Default selection (tra quelle filtrate)
+if (!microSelectedId) {
+  const firstActive = onlyEmail3.find((q) => q?.active) || onlyEmail3[0];
+  if (firstActive?.id) setMicroSelectedId(String(firstActive.id));
+}
+
+// Se il filtro non trova nulla, avvisiamo chiaramente
+if (onlyEmail3.length === 0) {
+  setMicroError(
+    "Nessuna domanda trovata per Email 3 — Speaker. Controlla la tabella micro_questions (campaign_label/campaign_key) oppure rimuovi il filtro."
+  );
+}
+
     } catch (e) {
       setMicroError(e?.message || "Errore inatteso micro-polls");
     } finally {
