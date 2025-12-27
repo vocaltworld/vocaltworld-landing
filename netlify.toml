@@ -1,48 +1,33 @@
-# =====================================================
-# API ROUTING (BLINDATO) – SEMPRE PRIMA DI TUTTO
-# =====================================================
-[[redirects]]
-from = "/api/*"
-to = "/.netlify/functions/:splat"
-status = 200
-force = true
-
-# =====================================================
-# BUILD
-# =====================================================
 [build]
 base = "client"
 command = "npm run build"
 publish = "dist"
 
-# =====================================================
-# FUNCTIONS
-# =====================================================
 [functions]
 directory = "../netlify/functions"
 
-# =====================================================
-# DEV (vite)
-# =====================================================
 [dev]
 command = "npm run dev"
 port = 3999
 targetPort = 5173
 framework = "vite"
 
-# =====================================================
-# REDIRECT dominio netlify.app → dominio custom
-# =====================================================
+# (opzionale) redirect dal sito netlify.app al dominio custom
 [[redirects]]
 from = "https://warm-meringue-f2f353.netlify.app/*"
 to = "https://survey.vocaltworld.com/:splat"
 status = 301
 force = true
 
-# =====================================================
-# NO CACHE API
-# =====================================================
-[[headers]]
-for = "/api/*"
-  [headers.values]
-  Cache-Control = "no-store"
+# ✅ API ROUTE: tutto /api/* va alle Netlify Functions
+[[redirects]]
+from = "/api/*"
+to = "/.netlify/functions/:splat"
+status = 200
+force = true
+
+# ✅ (solo se nel tuo progetto hai una SPA fallback)
+# [[redirects]]
+# from = "/*"
+# to = "/index.html"
+# status = 200
