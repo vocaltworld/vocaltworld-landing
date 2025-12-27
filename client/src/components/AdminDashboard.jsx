@@ -777,39 +777,26 @@ export default function AdminDashboard() {
 
       const list = Array.isArray(data.questions) ? data.questions : [];
 
-      // ✅ Per ora: mostriamo SOLO la campagna "Email 3 — Speaker"
-      const onlyEmail3 = list
-        .filter((q) => {
-          const label = String(q?.campaign_label || q?.campaign_key || "").toLowerCase();
-          const question = String(q?.question || "").toLowerCase();
-          return (
-            label.includes("email 3") ||
-            label.includes("speaker") ||
-            question.includes("email 3") ||
-            question.includes("speaker")
-          );
-        })
-        // dedupe per id
-        .reduce((acc, q) => {
-          const id = String(q?.id || "");
-          if (!id) return acc;
-          if (acc.some((x) => String(x?.id || "") === id)) return acc;
-          acc.push(q);
-          return acc;
-        }, []);
+      // ✅ Mostra tutte le domande (la UI deve riflettere SEMPRE la domanda attiva reale su Supabase)
+      // Ordiniamo per created_at desc così la lista è coerente.
+      const sorted = [...list].sort((a, b) => {
+        const da = new Date(a?.created_at || a?.createdAt || 0).getTime();
+        const db = new Date(b?.created_at || b?.createdAt || 0).getTime();
+        return db - da;
+      });
 
-      setMicroQuestions(onlyEmail3);
+      setMicroQuestions(sorted);
 
-      // Default selection (tra quelle filtrate)
+      // Default selection: prima quella attiva, altrimenti la più recente
       if (!microSelectedId) {
-        const firstActive = onlyEmail3.find((q) => q?.active) || onlyEmail3[0];
+        const firstActive = sorted.find((q) => q?.active) || sorted[0];
         if (firstActive?.id) setMicroSelectedId(String(firstActive.id));
       }
 
-      // Se il filtro non trova nulla, avvisiamo chiaramente
-      if (onlyEmail3.length === 0) {
+      // Se non troviamo nulla, avvisiamo chiaramente
+      if (sorted.length === 0) {
         setMicroError(
-          "Nessuna domanda trovata per Email 3 — Speaker. Controlla la tabella micro_questions (campaign_label/campaign_key) oppure rimuovi il filtro."
+          "Nessuna domanda trovata nella tabella micro_questions. Controlla Supabase (tabella micro_questions)."
         );
       }
 
