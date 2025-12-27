@@ -12,6 +12,33 @@ port = 3999
 targetPort = 5173
 framework = "vite"
 
+# ✅ API ROUTE (esplicite): /api/* -> Netlify Functions
+# Mettiamo prima le route specifiche, poi il fallback.
+[[redirects]]
+from = "/api/admin-dashboard"
+to = "/.netlify/functions/admin-dashboard"
+status = 200
+force = true
+
+[[redirects]]
+from = "/api/admin-micro-polls"
+to = "/.netlify/functions/admin-micro-polls"
+status = 200
+force = true
+
+[[redirects]]
+from = "/api/micro-poll-link"
+to = "/.netlify/functions/micro-poll-link"
+status = 200
+force = true
+
+# Fallback: qualunque altra /api/<nome> va alla function corrispondente
+[[redirects]]
+from = "/api/*"
+to = "/.netlify/functions/:splat"
+status = 200
+force = true
+
 # (opzionale) redirect dal sito netlify.app al dominio custom
 [[redirects]]
 from = "https://warm-meringue-f2f353.netlify.app/*"
@@ -19,15 +46,13 @@ to = "https://survey.vocaltworld.com/:splat"
 status = 301
 force = true
 
-# ✅ API ROUTE: tutto /api/* va alle Netlify Functions
-[[redirects]]
-from = "/api/*"
-to = "/.netlify/functions/:splat"
-status = 200
-force = true
+# ✅ NO-CACHE: evita comportamenti strani su Edge/CDN
+[[headers]]
+for = "/api/*"
+  [headers.values]
+  Cache-Control = "no-store"
 
-# ✅ (solo se nel tuo progetto hai una SPA fallback)
-# [[redirects]]
-# from = "/*"
-# to = "/index.html"
-# status = 200
+[[headers]]
+for = "/.netlify/functions/*"
+  [headers.values]
+  Cache-Control = "no-store"
