@@ -16,3 +16,16 @@ framework = "vite"
   to = "https://survey.vocaltworld.com/:splat"
   status = 301
   force = true
+  
+BLINDA: qualsiasi richiesta a /.netlify/functions/* deve andare SEMPRE alla function
+[[redirects]]
+  from = "/.netlify/functions/*"
+  to = "/.netlify/functions/:splat"
+  status = 200
+  force = true
+
+NO-CACHE: evita comportamenti strani su Edge/CDN
+[[headers]]
+  for = "/.netlify/functions/*"
+  [headers.values]
+    Cache-Control = "no-store"
