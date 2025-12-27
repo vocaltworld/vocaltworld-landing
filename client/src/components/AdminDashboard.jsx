@@ -532,41 +532,80 @@ export default function AdminDashboard() {
     return apiPath.replace(/^\/api\//, "/.netlify/functions/");
   }
 
+  function addCacheBust(url) {
+    const u = new URL(url, typeof window !== "undefined" ? window.location.origin : "http://localhost");
+    // evita cache CDN/edge quando stiamo diagnosticando routing
+    u.searchParams.set("__t", String(Date.now()));
+    return u.pathname + u.search;
+  }
+
+  async function safePeekHtml(res) {
+    // Se Netlify ci ha servito index.html (SPA), a volte content-type è html,
+    // ma per sicurezza facciamo una peek di poche decine di caratteri.
+    try {
+      const clone = res.clone();
+      const txt = await clone.text();
+      const head = (txt || "").slice(0, 200).toLowerCase();
+      return head.includes("<!doctype html") || head.includes("<html");
+    } catch {
+      return false;
+    }
+  }
+
   async function fetchJsonWithFallback(apiPath, { method = "GET", body, headers: extraHeaders } = {}) {
+    const m = String(method || "GET").toUpperCase();
+
+    // ⚠️ Non impostiamo Content-Type su GET: alcuni edge/proxy fanno cose strane.
     const headers = {
-      "Content-Type": "application/json",
-      "x-admin-key": adminKey || "",
+      Accept: "application/json",
+      ...(adminKey ? { "x-admin-key": adminKey } : {}),
       ...(extraHeaders || {}),
     };
 
-    const opts = { method, headers };
-    if (body !== undefined && method !== "GET") {
+    const opts = {
+      method: m,
+      headers,
+      cache: "no-store",
+    };
+
+    if (body !== undefined && m !== "GET") {
+      opts.headers = {
+        ...headers,
+        "Content-Type": "application/json",
+      };
       opts.body = typeof body === "string" ? body : JSON.stringify(body);
     }
 
-    // 1) Proviamo /api/*
-    let res = await fetch(apiPath, opts);
+    // 1) Proviamo /api/* (con cache-bust)
+    const primaryUrl = addCacheBust(apiPath);
+    let res = await fetch(primaryUrl, opts);
     let ct = (res.headers.get("content-type") || "").toLowerCase();
 
-    // Se arriva HTML o un 404 SPA-like, fallback su /.netlify/functions/*
-    const looksLikeSpaHtml = ct.includes("text/html");
-    const shouldFallback = looksLikeSpaHtml;
+    // Condizioni di fallback:
+    // - content-type html
+    // - content-type non-json (es. vuoto) ma status 200
+    // - body sembra HTML (peek)
+    const looksHtmlByHeader = ct.includes("text/html");
+    const looksNonJsonOk = res.ok && !ct.includes("application/json");
+    const looksHtmlByBody = looksHtmlByHeader || looksNonJsonOk ? await safePeekHtml(res) : false;
 
-    if (shouldFallback) {
-      const fnPath = toFunctionsPath(apiPath);
+    if (looksHtmlByHeader || looksNonJsonOk || looksHtmlByBody) {
+      const fnPath = addCacheBust(toFunctionsPath(apiPath));
       res = await fetch(fnPath, opts);
       ct = (res.headers.get("content-type") || "").toLowerCase();
     }
 
-    if (ct.includes("text/html")) {
+    // Se ancora HTML, errore chiaro
+    if (ct.includes("text/html") || (res.ok && !ct.includes("application/json") && (await safePeekHtml(res)))) {
       const err = new Error(
-        "Routing /api non allineato: sto ricevendo HTML invece di JSON. Controlla netlify.toml (redirect /api/* prima di /*)."
+        "Routing non allineato: ricevuto HTML invece di JSON. (Fallback già tentato su /.netlify/functions)."
       );
       err._isHtmlFallback = true;
       err._status = res.status;
       throw err;
     }
 
+    // Parse JSON
     const data = await res.json().catch(() => ({}));
     return { res, data };
   }
