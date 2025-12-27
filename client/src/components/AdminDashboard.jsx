@@ -526,7 +526,7 @@ export default function AdminDashboard() {
       setMicroError("");
       setMicroLoading(true);
 
-      const res = await fetch("/.netlify/functions/admin-micro-polls?mode=questions", {
+      const res = await fetch("/api/admin-micro-polls?mode=questions", {
         method: "GET",
         headers: {
           "Content-Type": "application/json",
@@ -599,7 +599,7 @@ if (onlyEmail3.length === 0) {
       }
 
       const res = await fetch(
-        `/.netlify/functions/admin-micro-polls?mode=results&question_id=${encodeURIComponent(questionId)}`,
+        `/api/admin-micro-polls?mode=results&question_id=${encodeURIComponent(questionId)}`,
         {
           method: "GET",
           headers: {
@@ -638,7 +638,7 @@ if (onlyEmail3.length === 0) {
       if (!silent) setError("");
       if (silent) setIsSyncing(true);
 
-      const res = await fetch("/.netlify/functions/admin-dashboard", {
+      const res = await fetch("/api/admin-dashboard", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",

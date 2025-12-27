@@ -11,21 +11,23 @@ command = "npm run dev"
 port = 3999
 targetPort = 5173
 framework = "vite"
+
+# (opzionale) redirect dal sito netlify.app al dominio custom
 [[redirects]]
-  from = "https://warm-meringue-f2f353.netlify.app/*"
-  to = "https://survey.vocaltworld.com/:splat"
-  status = 301
-  force = true
-  
-# BLINDA: qualsiasi richiesta a /.netlify/functions/* deve andare SEMPRE alla function
+from = "https://warm-meringue-f2f353.netlify.app/*"
+to = "https://survey.vocaltworld.com/:splat"
+status = 301
+force = true
+
+# API ROUTE (blindato): tutto ciò che è /api/* va alle Netlify Functions
 [[redirects]]
-  from = "/.netlify/functions/*"
-  to = "/.netlify/functions/:splat"
-  status = 200
-  force = true
+from = "/api/*"
+to = "/.netlify/functions/:splat"
+status = 200
+force = true
 
 # NO-CACHE: evita comportamenti strani su Edge/CDN
 [[headers]]
-  for = "/.netlify/functions/*"
+for = "/api/*"
   [headers.values]
-    Cache-Control = "no-store"
+  Cache-Control = "no-store"
