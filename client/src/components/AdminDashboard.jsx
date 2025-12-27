@@ -521,6 +521,43 @@ export default function AdminDashboard() {
 
   const detailRef = useRef(null);
 
+  // ---------------------------
+  // API helper (Netlify /api/* -> Functions)
+  // - A volte, se i redirect non matchano, Netlify risponde con HTML (index.html)
+  // - Questa helper intercetta il caso e (per admin-dashboard) fa fallback GET se serve.
+  // ---------------------------
+  async function apiFetchJson(path, { method = "GET", body } = {}) {
+    const headers = {
+      "Content-Type": "application/json",
+      "x-admin-key": adminKey || "",
+    };
+
+    const opts = {
+      method,
+      headers,
+    };
+
+    if (body !== undefined && method !== "GET") {
+      opts.body = typeof body === "string" ? body : JSON.stringify(body);
+    }
+
+    const res = await fetch(path, opts);
+
+    // Se per qualche motivo arriva HTML (fallback SPA), lo segnaliamo subito.
+    const ct = (res.headers.get("content-type") || "").toLowerCase();
+    if (ct.includes("text/html")) {
+      const err = new Error(
+        "Routing /api non allineato: sto ricevendo HTML invece di JSON. Controlla netlify.toml (redirect /api/* prima di /*)."
+      );
+      err._isHtmlFallback = true;
+      err._status = res.status;
+      throw err;
+    }
+
+    const data = await res.json().catch(() => ({}));
+    return { res, data };
+  }
+
   async function fetchMicroQuestions() {
     try {
       setMicroError("");
@@ -638,14 +675,26 @@ if (onlyEmail3.length === 0) {
       if (!silent) setError("");
       if (silent) setIsSyncing(true);
 
-      const res = await fetch("/api/admin-dashboard", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "x-admin-key": adminKey || "",
-        },
-        body: JSON.stringify({ secret: adminKey || "" }),
-      });
+      // Proviamo POST (compatibilità con versioni precedenti), ma se il backend è GET-only
+      // o se per qualche motivo la route non è trovata, facciamo fallback GET.
+      let res;
+      let data;
+
+      try {
+        ({ res, data } = await apiFetchJson("/api/admin-dashboard", {
+          method: "POST",
+          body: { secret: adminKey || "" },
+        }));
+      } catch (e) {
+        // Se arriva HTML, è un problema di routing /api
+        if (e?._isHtmlFallback) throw e;
+        throw e;
+      }
+
+      // Fallback GET se la function è stata implementata GET-only o se Netlify risponde 404 su POST
+      if (res && res.status === 404) {
+        ({ res, data } = await apiFetchJson("/api/admin-dashboard", { method: "GET" }));
+      }
 
       if (res.status === 401) {
         setError("Codice segreto non valido.");
@@ -656,8 +705,6 @@ if (onlyEmail3.length === 0) {
       }
 
       if (!res.ok) throw new Error("Errore nel caricamento dei dati (" + res.status + ")");
-
-      const data = await res.json();
 
       let nextSurveys = data.surveys || data.responses || [];
       if (!Array.isArray(nextSurveys)) nextSurveys = [];
