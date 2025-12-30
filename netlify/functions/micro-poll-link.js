@@ -161,7 +161,11 @@ exports.handler = async (event) => {
     // Scadenza token: 7 giorni
     const exp = Date.now() + 7 * 24 * 60 * 60 * 1000;
 
-    const dataObj = { e: email, q: questionId, exp };
+    // token_id: identificativo univoco usato come chiave per bloccare il doppio voto
+    // (deve essere lo stesso che poi scriviamo su Supabase come `token_id`)
+    const tokenId = crypto.randomBytes(16).toString("hex");
+
+    const dataObj = { e: email, q: questionId, t: tokenId, exp };
     const data = base64url(JSON.stringify(dataObj));
     const sig = sign(MICRO_POLL_SECRET, data);
     const token = `${data}.${sig}`;
@@ -180,7 +184,7 @@ exports.handler = async (event) => {
     }
 
     // API mode: ritorna SOLO i dati necessari al client
-    return json(200, { ok: true, token, exp }, headers);
+    return json(200, { ok: true, token, exp, token_id: tokenId }, headers);
   } catch (err) {
     return json(
       500,
