@@ -53,7 +53,7 @@ exports.handler = async function handler(event) {
   try {
     if (mode === "questions") {
       const { data, error } = await sbGet(
-        `${SUPABASE_URL}/rest/v1/micro_questions?select=id,question,option_yes,option_no,active,campaign_key,campaign_label&order=created_at.desc`,
+        `${SUPABASE_URL}/rest/v1/micro_questions?select=id,question,option_yes,option_no,active&order=created_at.desc`,
         SERVICE_KEY
       );
       if (error) throw error;
@@ -63,7 +63,7 @@ exports.handler = async function handler(event) {
         ? data.map((q) => ({
             ...q,
             // stable label fallback
-            label: q?.campaign_label || q?.campaign_key || q?.question || q?.id,
+            label: q?.question || q?.id,
           }))
         : [];
 
