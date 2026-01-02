@@ -145,11 +145,17 @@ export default function VotePage() {
           format: "json",
         });
 
-        const res = await fetch(`/.netlify/functions/micro-poll-link?${qs.toString()}`);
+        const res = await fetch(`/.netlify/functions/micro-poll-link?${qs.toString()}`, {
+          headers: { Accept: "application/json" },
+        });
 
-        const data = await res.json().catch(() => ({}));
+        const contentType = (res.headers.get("content-type") || "").toLowerCase();
+        const data = contentType.includes("application/json")
+          ? await res.json().catch(() => ({}))
+          : {};
+
         if (!res.ok || !data?.token) {
-          throw new Error((data?.error || "Impossibile generare il token.").toString());
+          throw new Error((data?.error || `Impossibile generare il token (${res.status}).`).toString());
         }
 
         if (isMounted) setToken(String(data.token));
@@ -164,7 +170,7 @@ export default function VotePage() {
     return () => {
       isMounted = false;
     };
-  }, [tokenFromUrl, emailFromUrl, safeId]);
+  }, [tokenFromUrl, emailFromUrl, safeId, token]);
 
   // 3) Se arriva ?c=1/2, pre-seleziona e mostra conferma
   useEffect(() => {

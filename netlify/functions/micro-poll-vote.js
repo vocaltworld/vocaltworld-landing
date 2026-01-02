@@ -2,7 +2,8 @@ const crypto = require("crypto");
 
 const SUPABASE_TABLE = "micro_poll_responses";
 // Expected columns in public.micro_poll_responses:
-// question_id (uuid), choice ('yes'|'no'), token_id (text), email (text), created_at
+// question_id (uuid), choice ('yes'|'no'), token_id (text), voter_hash (text), email (text), created_at
+// DB should enforce: UNIQUE (question_id, voter_hash) to block re-votes by the same email on the same question.
 
 function json(statusCode, body, extraHeaders = {}) {
   return {
@@ -106,6 +107,9 @@ exports.handler = async (event) => {
     const token_id = String(decoded?.t || decoded?.tid || "").trim();
     const exp = Number(decoded?.exp || 0);
 
+    // Privacy-friendly stable identifier for uniqueness (same email => same hash)
+    const voter_hash = crypto.createHash("sha256").update(email).digest("hex");
+
     if (!email || !question_id || !token_id || !exp) {
       return json(400, { ok: false, error: "token_missing_fields" }, cors);
     }
@@ -126,16 +130,16 @@ exports.handler = async (event) => {
         apikey: SERVICE_KEY,
         Authorization: `Bearer ${SERVICE_KEY}`,
         "Content-Type": "application/json",
-        // We WANT a 409 on duplicate (unique index on question_id + token_id)
+        // We WANT a 409 on duplicate (unique index on question_id + voter_hash)
         Prefer: "return=representation",
       },
-      body: JSON.stringify({ question_id, choice, token_id, email }),
+      body: JSON.stringify({ question_id, choice, token_id, voter_hash, email }),
     });
 
     const insertData = await insertRes.json().catch(() => null);
 
     if (!insertRes.ok) {
-      // With unique index (question_id, token_id) a double vote should be 409.
+      // With unique index (question_id, voter_hash) a double vote should be 409.
       const pgCode = insertData && (insertData.code || insertData?.details?.code);
       if (insertRes.status === 409 || pgCode === "23505") {
         return json(200, { ok: true, already_voted: true }, cors);

@@ -74,7 +74,7 @@ exports.handler = async function handler(event) {
       if (!questionId) return json(400, { ok: false, error: "missing_question_id" }, origin);
 
       const { data: rows, error: rErr } = await sbGet(
-        `${SUPABASE_URL}/rest/v1/micro_poll_responses?select=created_at,choice,email,token_id,question_id&question_id=eq.${encodeURIComponent(
+        `${SUPABASE_URL}/rest/v1/micro_poll_responses?select=created_at,choice,email,voter_hash,question_id&question_id=eq.${encodeURIComponent(
           questionId
         )}&order=created_at.desc&limit=500`,
         SERVICE_KEY
@@ -111,7 +111,7 @@ exports.handler = async function handler(event) {
 
     return json(400, { ok: false, error: "invalid_mode" }, origin);
   } catch (e) {
-    return json(500, { ok: false, error: "internal", message: e?.message || "unknown", detail: e }, origin);
+    return json(500, { ok: false, error: "internal", message: String(e?.message || e || "unknown") }, origin);
   }
 };
 

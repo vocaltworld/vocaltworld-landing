@@ -258,8 +258,16 @@ export default function AdminDashboard() {
 // ✅ Tenere SOLO il micro-poll ufficiale (Email 3 — Speaker) per evitare confusione
 // Se in futuro cambi domanda/ID, aggiorna qui.
 const MICRO_ALLOWED_IDS = new Set([
-  "76677bc6-ed40-4d1f-979b-3db101773611", // Email 3 — Speaker
+  "76677bc6-e4d0-4d1f-979b-3db101773611", // Email 3 — Speaker (ID corretto)
 ]);
+
+// Normalizza la choice del micro-poll (supporta sia vecchio formato 1/2 che nuovo yes/no)
+function normalizeMicroChoice(v) {
+  const c = String(v ?? "").trim().toLowerCase();
+  if (c === "1" || c === "yes" || c === "si" || c === "y") return "1";
+  if (c === "2" || c === "no" || c === "n") return "2";
+  return "";
+}
   // Polling silenzioso (senza refresh pagina) + mantenimento selezione dettaglio
   const pollingRef = useRef(null);
   const selectedKeyRef = useRef(null);
@@ -381,11 +389,14 @@ const MICRO_ALLOWED_IDS = new Set([
     ];
 
     const header = ["email", "data", "scelta"];
-    const body = (rows || []).map((r) => [
-      displayEmail(r.email),
-      formatDate(r.created_at || r.createdAt),
-      String(r.choice) === "1" ? "SI" : "NO",
-    ]);
+    const body = (rows || []).map((r) => {
+      const c = normalizeMicroChoice(r.choice);
+      return [
+        displayEmail(r.email),
+        formatDate(r.created_at || r.createdAt),
+        c === "1" ? "SI" : c === "2" ? "NO" : "",
+      ];
+    });
 
     return rowsToCsv([...meta, header, ...body], { delimiter: ";" });
   }
@@ -582,7 +593,7 @@ const MICRO_ALLOWED_IDS = new Set([
                 <div className="admin-table-body">
                   {microRows.map((r, idx) => {
                     const rowId = `micro-row-${idx}`;
-                    const choice = String(r.choice);
+                    const choice = normalizeMicroChoice(r.choice);
                     return (
                       <div key={rowId} className="admin-row" style={{ cursor: "default" }}>
                         <div className="admin-td admin-td-email" title={r.email || ""}>
@@ -590,8 +601,13 @@ const MICRO_ALLOWED_IDS = new Set([
                         </div>
                         <div className="admin-td admin-td-date">{formatDate(r.created_at || r.createdAt)}</div>
                         <div className="admin-td admin-td-score">
-                          <span className={"admin-pill " + (choice === "1" ? "admin-pill-yes" : "admin-pill-no")}>
-                            {choice === "1" ? "SI" : "NO"}
+                          <span
+                            className={
+                              "admin-pill " +
+                              (choice === "1" ? "admin-pill-yes" : choice === "2" ? "admin-pill-no" : "")
+                            }
+                          >
+                            {choice === "1" ? "SI" : choice === "2" ? "NO" : "-"}
                           </span>
                         </div>
                       </div>
