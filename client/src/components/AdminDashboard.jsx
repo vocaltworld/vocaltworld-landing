@@ -258,9 +258,14 @@ export default function AdminDashboard() {
     const microRowsBodyRef = useRef(null); // body tabella micro-poll (scroll)
 const surveysTableBodyRef = useRef(null); // body tabella partecipanti
 const microSelectedIdRef = useRef(""); // evita closure stale nel polling
+const microSigRef = useRef("");          // firma dati micro-poll (anti-flicker)
+const microLastUpdatedRef = useRef(0);   // timestamp ultimo update (solo per UI)
   const [microLastUpdatedAt, setMicroLastUpdatedAt] = useState(null);
   useEffect(() => {
   microSelectedIdRef.current = microSelectedId || "";
+}, [microSelectedId]);
+useEffect(() => {
+  microSigRef.current = ""; // quando cambi domanda, forza refresh dati
 }, [microSelectedId]);
 
 // Normalizza la choice del micro-poll (supporta sia vecchio formato 1/2 che nuovo yes/no)
