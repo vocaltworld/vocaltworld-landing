@@ -255,10 +255,13 @@ export default function AdminDashboard() {
   const [microLoading, setMicroLoading] = useState(false);
   const [microError, setMicroError] = useState("");
   const microPollingRef = useRef(null);
-    const microTableBodyRef = useRef(null);
-  const microSigRef = useRef("");
-  const microLastUpdatedRef = useRef(0);
+    const microRowsBodyRef = useRef(null); // body tabella micro-poll (scroll)
+const surveysTableBodyRef = useRef(null); // body tabella partecipanti
+const microSelectedIdRef = useRef(""); // evita closure stale nel polling
   const [microLastUpdatedAt, setMicroLastUpdatedAt] = useState(null);
+  useEffect(() => {
+  microSelectedIdRef.current = microSelectedId || "";
+}, [microSelectedId]);
 
 // Normalizza la choice del micro-poll (supporta sia vecchio formato 1/2 che nuovo yes/no)
 function normalizeMicroChoice(v) {
@@ -603,7 +606,7 @@ function microRowKey(r) {
                   <div className="admin-th admin-th-score">Scelta</div>
                 </div>
 
-                <div className="admin-table-body">
+                <div className="admin-table-body" ref={microRowsBodyRef}>
                   {microRows.map((r, idx) => {
                     const rowKey = microRowKey(r);
                     const choice = normalizeMicroChoice(r.choice);
@@ -892,10 +895,13 @@ function microRowKey(r) {
         nextRows.map((r) => `${microRowKey(r)}:${String(r?.choice ?? "")}`).join(",");
 
       if (nextSig === microSigRef.current) {
-        return;
-      }
+  // anche se i dati sono identici, aggiorniamo l’orario
+  microLastUpdatedRef.current = Date.now();
+  setMicroLastUpdatedAt(new Date().toISOString());
+  return;
+}
 
-      const el = microTableBodyRef.current;
+      const el = microRowsBodyRef.current;
       const prevScrollTop = el ? el.scrollTop : 0;
       const prevScrollHeight = el ? el.scrollHeight : 0;
 
@@ -907,7 +913,7 @@ function microRowKey(r) {
       setMicroLastUpdatedAt(new Date().toISOString());
 
       requestAnimationFrame(() => {
-        const el2 = microTableBodyRef.current;
+        const el2 = microRowsBodyRef.current;
         if (!el2) return;
 
         const newScrollHeight = el2.scrollHeight;
@@ -1036,23 +1042,26 @@ function microRowKey(r) {
     }, 15000);
 
     // polling leggero micro-polls (solo se c'è una domanda selezionata)
-    microPollingRef.current = setInterval(() => {
-      if (typeof document !== "undefined" && document.hidden) return;
-      if (!microSelectedId) return;
-      fetchMicroResults(microSelectedId, { silent: true });
-    }, 8000);
+  microPollingRef.current = setInterval(() => {
+  if (typeof document !== "undefined" && document.hidden) return;
+  const qid = microSelectedIdRef.current;
+  if (!qid) return;
+  fetchMicroResults(qid, { silent: true });
+}, 8000);
 
-    const onFocus = () => {
-      fetchDashboardData({ silent: true });
-      if (microSelectedId) fetchMicroResults(microSelectedId, { silent: true });
-    };
+  const onFocus = () => {
+  fetchDashboardData({ silent: true });
+  const qid = microSelectedIdRef.current;
+  if (qid) fetchMicroResults(qid, { silent: true });
+};
 
-    const onVisibility = () => {
-      if (typeof document !== "undefined" && !document.hidden) {
-        fetchDashboardData({ silent: true });
-        if (microSelectedId) fetchMicroResults(microSelectedId, { silent: true });
-      }
-    };
+const onVisibility = () => {
+  if (typeof document !== "undefined" && !document.hidden) {
+    fetchDashboardData({ silent: true });
+    const qid = microSelectedIdRef.current;
+    if (qid) fetchMicroResults(qid, { silent: true });
+  }
+};
 
     if (typeof window !== "undefined") window.addEventListener("focus", onFocus);
     if (typeof document !== "undefined") document.addEventListener("visibilitychange", onVisibility);
@@ -1460,7 +1469,7 @@ function microRowKey(r) {
             <div className="admin-th admin-th-int">Interessato?</div>
           </div>
 
-            <div className="admin-table-body" ref={microTableBodyRef}>
+            <div className="admin-table-body" ref={surveysTableBodyRef}>
               {surveys.map((s, index) => {
                 const rowId = `admin-row-${index}`;
                 const showScore = typeof s.normalizedInterestScore === "number" ? s.normalizedInterestScore : "-";
