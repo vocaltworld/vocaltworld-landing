@@ -255,11 +255,10 @@ export default function AdminDashboard() {
   const [microLoading, setMicroLoading] = useState(false);
   const [microError, setMicroError] = useState("");
   const microPollingRef = useRef(null);
-// ✅ Tenere SOLO il micro-poll ufficiale (Email 3 — Speaker) per evitare confusione
-// Se in futuro cambi domanda/ID, aggiorna qui.
-const MICRO_ALLOWED_IDS = new Set([
-  "76677bc6-e4d0-4d1f-979b-3db101773611", // Email 3 — Speaker (ID corretto)
-]);
+    const microTableBodyRef = useRef(null);
+  const microSigRef = useRef("");
+  const microLastUpdatedRef = useRef(0);
+  const [microLastUpdatedAt, setMicroLastUpdatedAt] = useState(null);
 
 // Normalizza la choice del micro-poll (supporta sia vecchio formato 1/2 che nuovo yes/no)
 function normalizeMicroChoice(v) {
@@ -267,6 +266,16 @@ function normalizeMicroChoice(v) {
   if (c === "1" || c === "yes" || c === "si" || c === "y") return "1";
   if (c === "2" || c === "no" || c === "n") return "2";
   return "";
+}
+// Key stabile per righe micro-poll (evita re-mount e flicker)
+function microRowKey(r) {
+  const k =
+    r?.token_id ||
+    r?.tokenId ||
+    r?.voter_hash ||
+    r?.voterHash ||
+    `${r?.question_id || ""}__${r?.created_at || r?.createdAt || ""}__${r?.email || ""}`;
+  return String(k);
 }
   // Polling silenzioso (senza refresh pagina) + mantenimento selezione dettaglio
   const pollingRef = useRef(null);
@@ -579,7 +588,11 @@ function normalizeMicroChoice(v) {
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10 }}>
                 <h3 style={{ margin: 0, fontSize: 14, opacity: 0.9 }}>Risposte (live)</h3>
                 <div style={{ fontSize: 12, opacity: 0.75 }}>
-                  {microLoading ? "Sincronizzo…" : "Aggiornamento automatico"}
+                  {microLoading
+  ? "Sincronizzo…"
+  : microLastUpdatedAt
+    ? `Aggiornamento automatico • ${formatDate(microLastUpdatedAt)}`
+    : "Aggiornamento automatico"}
                 </div>
               </div>
 
@@ -592,10 +605,10 @@ function normalizeMicroChoice(v) {
 
                 <div className="admin-table-body">
                   {microRows.map((r, idx) => {
-                    const rowId = `micro-row-${idx}`;
+                    const rowKey = microRowKey(r);
                     const choice = normalizeMicroChoice(r.choice);
                     return (
-                      <div key={rowId} className="admin-row" style={{ cursor: "default" }}>
+                      <div key={rowKey} className="admin-row" style={{ cursor: "default" }}>
                         <div className="admin-td admin-td-email" title={r.email || ""}>
                           {displayEmail(r.email)}
                         </div>
@@ -824,25 +837,20 @@ function normalizeMicroChoice(v) {
         return db - da;
       });
 
-      // ✅ Filtra: tieni SOLO l'ID ufficiale (Email 3 — Speaker)
-const filtered = sorted.filter((q) => MICRO_ALLOWED_IDS.has(String(q?.id || "")));
-const finalList = filtered.length > 0 ? filtered : sorted;
+ 
+      setMicroQuestions(sorted);
 
-setMicroQuestions(finalList);
+      // selezione: se non hai selezionato nulla, scegli la prima active (o la prima in lista)
+      if (!microSelectedId) {
+        const firstActive = sorted.find((q) => q?.active) || sorted[0];
+        if (firstActive?.id) setMicroSelectedId(String(firstActive.id));
+      }
 
-// ✅ Selezione forzata: preferisci sempre la domanda ufficiale
-const preferred = finalList.find((q) => MICRO_ALLOWED_IDS.has(String(q?.id || "")));
-const firstActive = finalList.find((q) => q?.active) || finalList[0];
-const nextPick = preferred || firstActive;
-
-if (nextPick?.id) setMicroSelectedId(String(nextPick.id));
-
-// Se non troviamo nulla, avvisiamo chiaramente
-if (finalList.length === 0) {
-  setMicroError(
-    "Nessuna domanda trovata nella tabella micro_questions. Controlla Supabase (tabella micro_questions)."
-  );
-}
+      if (sorted.length === 0) {
+        setMicroError(
+          "Nessuna domanda trovata nella tabella micro_questions. Controlla Supabase (tabella micro_questions)."
+        );
+      }
 
     } catch (e) {
       setMicroError(e?.message || "Errore inatteso micro-polls");
@@ -874,8 +882,45 @@ if (finalList.length === 0) {
         throw new Error(data?.error || "Errore nel caricamento risultati");
       }
 
-      setMicroStats(data.stats || null);
-      setMicroRows(Array.isArray(data.rows) ? data.rows : []);
+            const nextStats = data.stats || null;
+      const nextRows = Array.isArray(data.rows) ? data.rows : [];
+
+      // firma per evitare setState inutili (no flicker)
+      const nextSig =
+        (nextStats ? `${nextStats.yes}|${nextStats.no}|${nextStats.total}` : "nostats") +
+        "||" +
+        nextRows.map((r) => `${microRowKey(r)}:${String(r?.choice ?? "")}`).join(",");
+
+      if (nextSig === microSigRef.current) {
+        return;
+      }
+
+      const el = microTableBodyRef.current;
+      const prevScrollTop = el ? el.scrollTop : 0;
+      const prevScrollHeight = el ? el.scrollHeight : 0;
+
+      microSigRef.current = nextSig;
+      setMicroStats(nextStats);
+      setMicroRows(nextRows);
+
+      microLastUpdatedRef.current = Date.now();
+      setMicroLastUpdatedAt(new Date().toISOString());
+
+      requestAnimationFrame(() => {
+        const el2 = microTableBodyRef.current;
+        if (!el2) return;
+
+        const newScrollHeight = el2.scrollHeight;
+        const delta = newScrollHeight - prevScrollHeight;
+
+        // se l’utente NON è in cima, compensiamo il delta per non spostare la vista
+        const userIsNearTop = prevScrollTop < 20;
+        if (!userIsNearTop && delta > 0) {
+          el2.scrollTop = prevScrollTop + delta;
+        } else {
+          el2.scrollTop = prevScrollTop;
+        }
+      });
     } catch (e) {
       if (!silent) setMicroError(e?.message || "Errore inatteso risultati");
     } finally {
@@ -1415,7 +1460,7 @@ if (finalList.length === 0) {
             <div className="admin-th admin-th-int">Interessato?</div>
           </div>
 
-            <div className="admin-table-body">
+            <div className="admin-table-body" ref={microTableBodyRef}>
               {surveys.map((s, index) => {
                 const rowId = `admin-row-${index}`;
                 const showScore = typeof s.normalizedInterestScore === "number" ? s.normalizedInterestScore : "-";
