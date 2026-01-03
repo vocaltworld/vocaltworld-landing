@@ -34,8 +34,43 @@ function safeEqual(a, b) {
   return crypto.timingSafeEqual(Buffer.from(sa), Buffer.from(sb));
 }
 
+function base64urlFromBuffer(buf) {
+  return Buffer.from(buf)
+    .toString("base64")
+    .replace(/=/g, "")
+    .replace(/\+/g, "-")
+    .replace(/\//g, "_");
+}
+
+// Legacy signer (hex) kept for backward-compat with old 2-part tokens
 function sign(secret, payload) {
   return crypto.createHmac("sha256", secret).update(payload).digest("hex");
+}
+
+function verifyJwtHS256(secret, token) {
+  const parts = String(token || "").split(".");
+  if (parts.length !== 3) {
+    return { ok: false, error: "invalid_token_format" };
+  }
+
+  const [h, p, s] = parts;
+  if (!h || !p || !s) return { ok: false, error: "invalid_token_format" };
+
+  const signingInput = `${h}.${p}`;
+  const expected = base64urlFromBuffer(
+    crypto.createHmac("sha256", secret).update(signingInput).digest()
+  );
+
+  if (!safeEqual(s, expected)) return { ok: false, error: "invalid_token" };
+
+  let decoded;
+  try {
+    decoded = JSON.parse(base64urlToString(p));
+  } catch {
+    return { ok: false, error: "invalid_token_payload" };
+  }
+
+  return { ok: true, decoded };
 }
 
 function base64urlToString(b64url) {
@@ -89,23 +124,38 @@ exports.handler = async (event) => {
     const choice = normalizeChoice(payload.choice);
     if (!choice) return json(400, { ok: false, error: "invalid_choice" }, cors);
 
-    const [data, sig] = token.split(".");
-    if (!data || !sig) return json(400, { ok: false, error: "invalid_token_format" }, cors);
-
-    const expectedSig = sign(MICRO_POLL_SECRET, data);
-    if (!safeEqual(sig, expectedSig)) return json(401, { ok: false, error: "invalid_token" }, cors);
+    // Token can be either:
+    // - JWT HS256: header.payload.signature (base64url)
+    // - Legacy: data.signature (hex) where data is base64url(JSON)
+    const parts = token.split(".");
 
     let decoded;
-    try {
-      decoded = JSON.parse(base64urlToString(data));
-    } catch {
-      return json(400, { ok: false, error: "invalid_token_payload" }, cors);
+
+    if (parts.length === 3) {
+      const v = verifyJwtHS256(MICRO_POLL_SECRET, token);
+      if (!v.ok) return json(401, { ok: false, error: v.error }, cors);
+      decoded = v.decoded;
+    } else if (parts.length === 2) {
+      const [data, sig] = parts;
+      if (!data || !sig) return json(400, { ok: false, error: "invalid_token_format" }, cors);
+
+      const expectedSig = sign(MICRO_POLL_SECRET, data);
+      if (!safeEqual(sig, expectedSig)) return json(401, { ok: false, error: "invalid_token" }, cors);
+
+      try {
+        decoded = JSON.parse(base64urlToString(data));
+      } catch {
+        return json(400, { ok: false, error: "invalid_token_payload" }, cors);
+      }
+    } else {
+      return json(400, { ok: false, error: "invalid_token_format" }, cors);
     }
 
     const email = String(decoded?.e || "").trim().toLowerCase();
     const question_id = String(decoded?.q || "").trim();
     const token_id = String(decoded?.t || decoded?.tid || "").trim();
     const exp = Number(decoded?.exp || 0);
+    // NOTE: exp is stored in ms (Date.now()), so compare directly.
 
     // Privacy-friendly stable identifier for uniqueness (same email => same hash)
     const voter_hash = crypto.createHash("sha256").update(email).digest("hex");

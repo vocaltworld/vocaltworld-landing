@@ -38,8 +38,15 @@ function base64urlToString(b64url) {
   return Buffer.from(b64 + pad, "base64").toString("utf8");
 }
 
-function sign(secret, payload) {
+// Legacy helper (kept in case other code paths need hex signatures)
+function signHex(secret, payload) {
   return crypto.createHmac("sha256", secret).update(payload).digest("hex");
+}
+
+// JWT (HS256) signature: base64url( HMAC_SHA256(secret, header.payload) )
+function signJwt(secret, signingInput) {
+  const digest = crypto.createHmac("sha256", secret).update(signingInput).digest("base64");
+  return digest.replace(/=/g, "").replace(/\+/g, "-").replace(/\//g, "_");
 }
 
 function normalizeEmail(v) {
@@ -158,15 +165,19 @@ exports.handler = async (event) => {
     if (!questionId) return json(400, { ok: false, error: "Missing question_id" }, corsHeaders(origin));
     if (!email) return json(400, { ok: false, error: "Missing/invalid email" }, corsHeaders(origin));
 
-    // Scadenza token: 7 giorni
+    // Scadenza token: 7 giorni (manteniamo ms per compatibilità con la logica lato vote)
     const exp = Date.now() + 7 * 24 * 60 * 60 * 1000;
 
+    // Token id unico (serve per bloccare doppi voti sullo stesso link)
+    const token_id = crypto.randomBytes(16).toString("hex");
 
-    // Token payload: email (e) + questionId (q) + expiry (exp)
-    const dataObj = { e: email, q: questionId, exp };
-    const data = base64url(JSON.stringify(dataObj));
-    const sig = sign(MICRO_POLL_SECRET, data);
-    const token = `${data}.${sig}`;
+    // JWT payload: email (e) + questionId (q) + expiry (exp) + token id (t)
+    const headerB64 = base64url(JSON.stringify({ alg: "HS256", typ: "JWT" }));
+    const payloadB64 = base64url(JSON.stringify({ e: email, q: questionId, exp, t: token_id }));
+
+    const signingInput = `${headerB64}.${payloadB64}`;
+    const sigB64 = signJwt(MICRO_POLL_SECRET, signingInput);
+    const token = `${signingInput}.${sigB64}`;
 
     // URL completo della pagina voto (usato solo per redirect)
     const url = `${redirectBase}/poll/${encodeURIComponent(questionId)}?token=${encodeURIComponent(token)}`;
@@ -182,7 +193,7 @@ exports.handler = async (event) => {
     }
 
     // API mode: ritorna SOLO i dati necessari al client
-    return json(200, { ok: true, token, exp }, headers);
+    return json(200, { ok: true, token, exp, token_id }, headers);
   } catch (err) {
     return json(
       500,
