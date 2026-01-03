@@ -8,5 +8,8 @@
 # ✅ API sempre prima (IMPORTANTISSIMO)
  /api/*  /.netlify/functions/:splat  200
 
+# ✅ micro-poll link (deve stare prima del fallback SPA)
+/micro   /.netlify/functions/micro-poll-link   200!
+
 # ✅ SPA fallback (deve stare sotto)
  /*  /index.html  200
