@@ -55,6 +55,12 @@ function normalizeEmail(v) {
   return s;
 }
 
+function normalizeFlow(v) {
+  const s = String(v || "").trim().toLowerCase();
+  if (s === "listener" || s === "pioneer" || s === "speaker") return s;
+  return "speaker";
+}
+
 function corsHeaders(origin) {
   // In produzione lascia passare solo i tuoi domini (e localhost per dev)
   const allowlist = new Set([
@@ -130,6 +136,14 @@ exports.handler = async (event) => {
         ""
     ).trim();
 
+    const flow = normalizeFlow(
+      payload.flow ||
+        payload.f ||
+        qs.flow ||
+        qs.f ||
+        "speaker"
+    );
+
     // Email può arrivare come raw o come base64url (consigliato: email_b64url)
     const emailRaw = payload.email || payload.e || qs.email || qs.e;
     const emailB64 = payload.email_b64 || payload.emailB64 || qs.email_b64 || qs.emailB64;
@@ -173,7 +187,7 @@ exports.handler = async (event) => {
 
     // JWT payload: email (e) + questionId (q) + expiry (exp) + token id (t)
     const headerB64 = base64url(JSON.stringify({ alg: "HS256", typ: "JWT" }));
-    const payloadB64 = base64url(JSON.stringify({ e: email, q: questionId, exp, t: token_id }));
+    const payloadB64 = base64url(JSON.stringify({ e: email, q: questionId, exp, t: token_id, f: flow }));
 
     const signingInput = `${headerB64}.${payloadB64}`;
     const sigB64 = signJwt(MICRO_POLL_SECRET, signingInput);
@@ -193,7 +207,7 @@ exports.handler = async (event) => {
     }
 
     // API mode: ritorna SOLO i dati necessari al client
-    return json(200, { ok: true, token, exp, token_id }, headers);
+    return json(200, { ok: true, token, exp, token_id, flow }, headers);
   } catch (err) {
     return json(
       500,

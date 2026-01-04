@@ -268,11 +268,13 @@ useEffect(() => {
   microSigRef.current = ""; // quando cambi domanda, forza refresh dati
 }, [microSelectedId]);
 
-// Normalizza la choice del micro-poll (supporta sia vecchio formato 1/2 che nuovo yes/no)
+// Normalizza la choice del micro-poll (supporta 1..4 e vari alias)
 function normalizeMicroChoice(v) {
   const c = String(v ?? "").trim().toLowerCase();
   if (c === "1" || c === "yes" || c === "si" || c === "y") return "1";
   if (c === "2" || c === "no" || c === "n") return "2";
+  if (c === "3") return "3";
+  if (c === "4") return "4";
   return "";
 }
 // Key stabile per righe micro-poll (evita re-mount e flicker)
@@ -456,6 +458,35 @@ function microRowKey(r) {
     const selectedFullLabel = selectedQ
       ? `${selectedBase} — ${selectedQuestionText || "Domanda"} (${selectedShortId || "id"})`
       : "";
+          // Opzioni dinamiche: supporta Speaker (option_yes/option_no) e Listener (option_1..option_4)
+    const opt1 = (selectedQ?.option_1 ?? selectedQ?.option_yes ?? "Sì").toString();
+    const opt2 = (selectedQ?.option_2 ?? selectedQ?.option_no ?? "No").toString();
+    const opt3 = (selectedQ?.option_3 ?? "").toString();
+    const opt4 = (selectedQ?.option_4 ?? "").toString();
+
+    const hasOpt3 = !!opt3.trim();
+    const hasOpt4 = !!opt4.trim();
+    const isFour = hasOpt3 || hasOpt4;
+
+    // Stats: compatibile sia col vecchio formato (yes/no) sia col nuovo (c1..c4)
+    const c1 = microStats?.c1 ?? microStats?.count1 ?? microStats?.yes ?? 0;
+    const c2 = microStats?.c2 ?? microStats?.count2 ?? microStats?.no ?? 0;
+    const c3 = microStats?.c3 ?? microStats?.count3 ?? 0;
+    const c4 = microStats?.c4 ?? microStats?.count4 ?? 0;
+
+    const p1 = microStats?.pct1 ?? microStats?.pctYes ?? 0;
+    const p2 = microStats?.pct2 ?? microStats?.pctNo ?? 0;
+    const p3 = microStats?.pct3 ?? 0;
+    const p4 = microStats?.pct4 ?? 0;
+
+    function choiceLabel(choice) {
+      const c = normalizeMicroChoice(choice);
+      if (c === "1") return opt1;
+      if (c === "2") return opt2;
+      if (c === "3") return opt3 || "Opzione 3";
+      if (c === "4") return opt4 || "Opzione 4";
+      return "-";
+    }
 
     return (
       <section className="admin-section" style={{ marginTop: 18 }}>
@@ -565,32 +596,50 @@ function microRowKey(r) {
               <p className="admin-error">Errore micro-polls: {microError}</p>
             </div>
           )}
+{microSelectedId && microStats && (
+  <div className="admin-stats" style={{ marginTop: 12 }}>
+    <div className="admin-stat-card admin-stat-total">
+      <span className="admin-stat-label">Totale voti</span>
+      <span className="admin-stat-value">{microStats.total ?? 0}</span>
+    </div>
 
-          {microSelectedId && microStats && (
-            <div className="admin-stats" style={{ marginTop: 12 }}>
-              <div className="admin-stat-card admin-stat-total">
-                <span className="admin-stat-label">Totale voti</span>
-                <span className="admin-stat-value">{microStats.total ?? 0}</span>
-              </div>
+    <div className="admin-stat-card admin-stat-yes">
+      <span className="admin-stat-label">1 — {opt1 || "Opzione 1"}</span>
+      <span className="admin-stat-value">
+        {c1}
+        <span className="admin-stat-sub"> ({p1}%)</span>
+      </span>
+    </div>
 
-              <div className="admin-stat-card admin-stat-yes">
-                <span className="admin-stat-label">Sì (1)</span>
-                <span className="admin-stat-value">
-                  {microStats.yes ?? 0}
-                  <span className="admin-stat-sub"> ({microStats.pctYes ?? 0}%)</span>
-                </span>
-              </div>
+    <div className="admin-stat-card admin-stat-no">
+      <span className="admin-stat-label">2 — {opt2 || "Opzione 2"}</span>
+      <span className="admin-stat-value">
+        {c2}
+        <span className="admin-stat-sub"> ({p2}%)</span>
+      </span>
+    </div>
 
-              <div className="admin-stat-card admin-stat-no">
-                <span className="admin-stat-label">No (2)</span>
-                <span className="admin-stat-value">
-                  {microStats.no ?? 0}
-                  <span className="admin-stat-sub"> ({microStats.pctNo ?? 0}%)</span>
-                </span>
-              </div>
-            </div>
-          )}
+    {isFour && (
+      <>
+        <div className="admin-stat-card admin-stat-yes">
+          <span className="admin-stat-label">3 — {opt3 || "Opzione 3"}</span>
+          <span className="admin-stat-value">
+            {c3}
+            <span className="admin-stat-sub"> ({p3}%)</span>
+          </span>
+        </div>
 
+        <div className="admin-stat-card admin-stat-no">
+          <span className="admin-stat-label">4 — {opt4 || "Opzione 4"}</span>
+          <span className="admin-stat-value">
+            {c4}
+            <span className="admin-stat-sub"> ({p4}%)</span>
+          </span>
+        </div>
+      </>
+    )}
+  </div>
+)}
           {microSelectedId && (
             <div style={{ marginTop: 14 }}>
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10 }}>
@@ -625,10 +674,14 @@ function microRowKey(r) {
                           <span
                             className={
                               "admin-pill " +
-                              (choice === "1" ? "admin-pill-yes" : choice === "2" ? "admin-pill-no" : "")
-                            }
+                              (choice === "1" || choice === "3"
+                                 ? "admin-pill-yes"
+                                 : choice === "2" || choice === "4"
+                                   ? "admin-pill-no"
+                                   : "")
+                                  }
                           >
-                            {choice === "1" ? "SI" : choice === "2" ? "NO" : "-"}
+                            {choiceLabel(choice)}
                           </span>
                         </div>
                       </div>
@@ -894,10 +947,28 @@ function microRowKey(r) {
       const nextRows = Array.isArray(data.rows) ? data.rows : [];
 
       // firma per evitare setState inutili (no flicker)
-      const nextSig =
-        (nextStats ? `${nextStats.yes}|${nextStats.no}|${nextStats.total}` : "nostats") +
-        "||" +
-        nextRows.map((r) => `${microRowKey(r)}:${String(r?.choice ?? "")}`).join(",");
+     const statsSig = nextStats
+  ? [
+      nextStats.total ?? "",
+      nextStats.yes ?? "",
+      nextStats.no ?? "",
+      nextStats.c1 ?? "",
+      nextStats.c2 ?? "",
+      nextStats.c3 ?? "",
+      nextStats.c4 ?? "",
+      nextStats.pctYes ?? "",
+      nextStats.pctNo ?? "",
+      nextStats.pct1 ?? "",
+      nextStats.pct2 ?? "",
+      nextStats.pct3 ?? "",
+      nextStats.pct4 ?? "",
+    ].join("|")
+  : "nostats";
+
+const nextSig =
+  statsSig +
+  "||" +
+  nextRows.map((r) => `${microRowKey(r)}:${String(r?.choice ?? "")}`).join(",");
 
       if (nextSig === microSigRef.current) {
   // anche se i dati sono identici, aggiorniamo l’orario
@@ -1187,7 +1258,7 @@ const onVisibility = () => {
         <div className="admin-header">
           <div className="admin-header-left">
             <h1 className="admin-title">Micro-sondaggi</h1>
-            <p style={{ margin: "6px 0 0 0", opacity: 0.85 }}>Filtra per campagna e vedi SI/NO in tempo reale.</p>
+            <p style={{ margin: "6px 0 0 0", opacity: 0.85 }}>Filtra per campagna e vedi le risposte in tempo reale.</p>
           </div>
 
           <div style={{ display: "flex", gap: 10, alignItems: "center" }}>

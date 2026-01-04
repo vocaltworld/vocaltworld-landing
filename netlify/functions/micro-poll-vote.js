@@ -81,8 +81,18 @@ function base64urlToString(b64url) {
 
 function normalizeChoice(v) {
   const raw = String(v || "").trim().toLowerCase();
-  if (raw === "yes" || raw === "y" || raw === "1") return "yes";
-  if (raw === "no" || raw === "n" || raw === "2") return "no";
+
+  // Backward-compat:
+  // - old UI could send yes/no
+  // - some clients send 1/2
+  // New: allow 1..4 for multi-option micro-polls (e.g., Listener flow)
+
+  if (raw === "yes" || raw === "y") return "1";
+  if (raw === "no" || raw === "n") return "2";
+
+  // Accept numeric choices as-is
+  if (raw === "1" || raw === "2" || raw === "3" || raw === "4") return raw;
+
   return "";
 }
 
@@ -122,6 +132,7 @@ exports.handler = async (event) => {
     if (token.length > 4096) return json(400, { ok: false, error: "token_too_long" }, cors);
 
     const choice = normalizeChoice(payload.choice);
+    // For safety: allow only 1..4 (multi-option) after normalization
     if (!choice) return json(400, { ok: false, error: "invalid_choice" }, cors);
 
     // Token can be either:
@@ -180,7 +191,8 @@ exports.handler = async (event) => {
         apikey: SERVICE_KEY,
         Authorization: `Bearer ${SERVICE_KEY}`,
         "Content-Type": "application/json",
-        // We WANT a 409 on duplicate (unique index on question_id + voter_hash)
+        // We WANT a 409 on duplicate (unique index on question_id + voter_hash).
+        // `choice` is stored as a string: "1".."4" (legacy yes/no are normalized to 1/2).
         Prefer: "return=representation",
       },
       body: JSON.stringify({ question_id, choice, token_id, voter_hash, email }),

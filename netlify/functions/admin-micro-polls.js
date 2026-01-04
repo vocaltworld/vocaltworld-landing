@@ -53,7 +53,7 @@ exports.handler = async function handler(event) {
   try {
     if (mode === "questions") {
       const { data, error } = await sbGet(
-        `${SUPABASE_URL}/rest/v1/micro_questions?select=id,question,option_yes,option_no,active&order=created_at.desc`,
+        `${SUPABASE_URL}/rest/v1/micro_questions?select=*&order=created_at.desc`,
         SERVICE_KEY
       );
       if (error) throw error;
@@ -83,19 +83,32 @@ exports.handler = async function handler(event) {
 
       const safeRows = Array.isArray(rows) ? rows : [];
 
-      // Accept both numeric and string forms just in case
-      const yes = safeRows.filter((r) => {
-        const c = String(r?.choice ?? "").toLowerCase();
-        return c === "1" || c === "yes";
-      }).length;
-      const no = safeRows.filter((r) => {
-        const c = String(r?.choice ?? "").toLowerCase();
-        return c === "2" || c === "no";
-      }).length;
-      const total = yes + no;
+      // ✅ Multi-choice support: accepts "1".."4" + legacy "yes"/"no"
+      const normChoice = (v) => {
+        const c = String(v ?? "").trim().toLowerCase();
+        if (c === "yes" || c === "y" || c === "si") return "1";
+        if (c === "no" || c === "n") return "2";
+        if (c === "1" || c === "2" || c === "3" || c === "4") return c;
+        return "";
+      };
 
-      const pctYes = total ? Math.round((yes / total) * 100) : 0;
-      const pctNo = total ? Math.round((no / total) * 100) : 0;
+      const counts = { "1": 0, "2": 0, "3": 0, "4": 0 };
+      for (const r of safeRows) {
+        const c = normChoice(r?.choice);
+        if (c && counts[c] !== undefined) counts[c] += 1;
+      }
+
+      const total = counts["1"] + counts["2"] + counts["3"] + counts["4"];
+
+      // Back-compat fields (Speaker poll uses 1/2)
+      const yes = counts["1"];
+      const no = counts["2"];
+
+      const pct = (n) => (total ? Math.round((n / total) * 100) : 0);
+      const pctYes = pct(yes);
+      const pctNo = pct(no);
+      const pct3 = pct(counts["3"]);
+      const pct4 = pct(counts["4"]);
 
       return json(
         200,
@@ -103,7 +116,24 @@ exports.handler = async function handler(event) {
           ok: true,
           question_id: questionId,
           rows: safeRows,
-          stats: { yes, no, total, pctYes, pctNo },
+          stats: {
+            // ✅ existing fields (do not break current UI)
+            yes,
+            no,
+            total,
+            pctYes,
+            pctNo,
+
+            // ✅ new fields for Listener (multi options)
+            c1: counts["1"],
+            c2: counts["2"],
+            c3: counts["3"],
+            c4: counts["4"],
+            pct1: pctYes,
+            pct2: pctNo,
+            pct3,
+            pct4,
+          },
         },
         origin
       );

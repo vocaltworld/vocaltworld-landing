@@ -42,10 +42,10 @@ export default function VotePage() {
     return raw;
   }, [searchParams]);
 
-  // Pre-selezione scelta: ?c=1 o ?c=2 (opzionale)
+  // Pre-selezione scelta: ?c=1..4 (opzionale)
   const choicePrefill = useMemo(() => {
     const c = (searchParams.get("c") || "").trim();
-    return c === "1" || c === "2" ? c : "";
+    return c === "1" || c === "2" || c === "3" || c === "4" ? c : "";
   }, [searchParams]);
 
   const [loading, setLoading] = useState(true);
@@ -89,7 +89,10 @@ export default function VotePage() {
       try {
         const { data, error: qErr } = await supabase
           .from("micro_questions")
-          .select("id, question, option_yes, option_no, active")
+          // Compatibilità: 2 opzioni (option_yes/option_no) + possibili 4 opzioni (varie naming)
+          .select(
+            "id, question, active, option_yes, option_no, option_1, option_2, option_3, option_4, option_a, option_b, option_c, option_d, options"
+          )
           .eq("id", safeId)
           .single();
 
@@ -250,6 +253,68 @@ export default function VotePage() {
 
   const canVote = !loading && !error && !!question && !submitted && !!token && !tokenLoading;
 
+  // Normalizza opzioni: supporta sia vecchio schema (yes/no) sia nuove domande multi-opzione.
+  const normalizedOptions = useMemo(() => {
+    if (!question) return [];
+
+    // 1) Se esiste un campo JSON/array "options", proviamolo per primo
+    const rawOptions = question?.options;
+    if (Array.isArray(rawOptions)) {
+      return rawOptions
+        .map((t, idx) => ({ value: String(idx + 1), label: String(t || "").trim() }))
+        .filter((o) => o.label);
+    }
+    if (rawOptions && typeof rawOptions === "object") {
+      // es: {"1":"...","2":"..."}
+      const entries = Object.entries(rawOptions)
+        .map(([k, v]) => ({ value: String(k).trim(), label: String(v || "").trim() }))
+        .filter((o) => o.value && o.label);
+      // se keys non sono numeriche, comunque ordiniamo per key
+      entries.sort((a, b) => a.value.localeCompare(b.value, undefined, { numeric: true }));
+      return entries;
+    }
+
+    // 2) Naming più comune: option_1..option_4
+    const o1 = String(question?.option_1 ?? "").trim();
+    const o2 = String(question?.option_2 ?? "").trim();
+    const o3 = String(question?.option_3 ?? "").trim();
+    const o4 = String(question?.option_4 ?? "").trim();
+    const hasNumeric = !!(o1 || o2 || o3 || o4);
+    if (hasNumeric) {
+      return [
+        { value: "1", label: o1 },
+        { value: "2", label: o2 },
+        { value: "3", label: o3 },
+        { value: "4", label: o4 },
+      ].filter((o) => o.label);
+    }
+
+    // 3) Alternate naming: option_a..option_d
+    const oa = String(question?.option_a ?? "").trim();
+    const ob = String(question?.option_b ?? "").trim();
+    const oc = String(question?.option_c ?? "").trim();
+    const od = String(question?.option_d ?? "").trim();
+    const hasAlpha = !!(oa || ob || oc || od);
+    if (hasAlpha) {
+      return [
+        { value: "1", label: oa },
+        { value: "2", label: ob },
+        { value: "3", label: oc },
+        { value: "4", label: od },
+      ].filter((o) => o.label);
+    }
+
+    // 4) Fallback: schema originale yes/no
+    const yes = String(question?.option_yes ?? "Sì").trim();
+    const no = String(question?.option_no ?? "No").trim();
+    return [
+      { value: "1", label: yes || "Sì" },
+      { value: "2", label: no || "No" },
+    ];
+  }, [question]);
+
+  const canVoteNow = canVote && normalizedOptions.length >= 2;
+
   return (
     <div
       style={{
@@ -294,25 +359,31 @@ export default function VotePage() {
             </h1>
 
             <p style={{ textAlign: "center", opacity: 0.8, fontSize: 13, margin: "0 0 16px 0" }}>
-              Puoi partecipare <b>una sola volta</b>. (Conferma prima di inviare)
+              Puoi partecipare <b>una sola volta</b>. Scegli un’opzione e poi conferma.
             </p>
 
-            <div style={{ display: "grid", gap: 10, opacity: canVote ? 1 : 0.6 }}>
-              <button
-                onClick={() => pick("1")}
-                disabled={!canVote}
-                style={{ ...btnStyle, background: "linear-gradient(135deg,#20d3ff,#447bff)" }}
-              >
-                {question.option_yes || "Sì"}
-              </button>
+            <div style={{ display: "grid", gap: 10, opacity: canVoteNow ? 1 : 0.6 }}>
+              {normalizedOptions.map((opt, idx) => {
+                // Gradient “rotazione” (non rompe lo stile esistente)
+                const gradients = [
+                  "linear-gradient(135deg,#20d3ff,#447bff)",
+                  "linear-gradient(135deg,#ff4fb5,#ff8f6b)",
+                  "linear-gradient(135deg,#35b6ff,#4c6bff)",
+                  "linear-gradient(135deg,#7a3dff,#35b6ff)",
+                ];
+                const bg = gradients[idx % gradients.length];
 
-              <button
-                onClick={() => pick("2")}
-                disabled={!canVote}
-                style={{ ...btnStyle, background: "linear-gradient(135deg,#ff4fb5,#ff8f6b)" }}
-              >
-                {question.option_no || "No"}
-              </button>
+                return (
+                  <button
+                    key={opt.value}
+                    onClick={() => pick(String(opt.value))}
+                    disabled={!canVoteNow}
+                    style={{ ...btnStyle, background: bg }}
+                  >
+                    {opt.label}
+                  </button>
+                );
+              })}
             </div>
           </>
         )}
