@@ -87,19 +87,48 @@ export default function VotePage() {
       }
 
       try {
-        const { data, error: qErr } = await supabase
-          .from("micro_questions")
-          // Compatibilità: 2 opzioni (option_yes/option_no) + possibili 4 opzioni (varie naming)
-          .select(
-            "id, question, active, option_yes, option_no, option_1, option_2, option_3, option_4, option_a, option_b, option_c, option_d, options"
-          )
-          .eq("id", safeId)
-          .single();
+        // 1) Prova prima nello schema SI/NO (speaker): public.micro_questions
+        let data = null;
+        let qErr = null;
 
-        if (qErr) throw qErr;
+        const ynRes = await supabase
+          .from("micro_questions")
+          .select("id, question, active, option_yes, option_no, created_at")
+          .eq("id", safeId)
+          .maybeSingle();
+
+        if (ynRes?.error) {
+          // se è un errore di query reale lo gestiamo sotto; se invece è solo "no rows", maybeSingle ritorna data=null senza error
+          qErr = ynRes.error;
+        } else if (ynRes?.data) {
+          data = { ...ynRes.data, _mode: "yn" };
+        }
+
+        // 2) Se non trovata, prova nello schema multi-opzione (listener/pioneer): public.micro_questions_multi
+        if (!data) {
+          const multiRes = await supabase
+            .from("micro_questions_multi")
+            .select("id, question, options, active, created_at")
+            .eq("id", safeId)
+            .maybeSingle();
+
+          if (multiRes?.error) {
+            // se avevamo già un errore sulla prima query, preferiamo quello più utile
+            throw qErr || multiRes.error;
+          }
+
+          if (multiRes?.data) {
+            data = { ...multiRes.data, _mode: "multi" };
+          }
+        }
+
+        // Se non c'è in nessuna tabella
+        if (!data) {
+          throw new Error("Domanda non trovata (ID non valido o non più disponibile).");
+        }
 
         if (!data?.active) {
-          throw new Error("Questa votazione non è disponibile (o è stata chiusa).");
+          throw new Error("Questa votazione non è disponibile (o è stata chiusa). ");
         }
 
         if (isMounted) setQuestion(data);
