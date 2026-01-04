@@ -80,17 +80,17 @@ function base64urlToString(b64url) {
 }
 
 function normalizeChoice(v) {
-  const raw = String(v || "").trim().toLowerCase();
+  const raw = String(v ?? "").trim().toLowerCase();
 
-  // Backward-compat:
-  // - old UI could send yes/no
-  // - some clients send 1/2
-  // New: allow 1..4 for multi-option micro-polls (e.g., Listener flow)
+  // ✅ Italiano (speaker)
+  if (raw === "si" || raw === "sì") return "1";
+  if (raw === "no") return "2";
 
-  if (raw === "yes" || raw === "y") return "1";
-  if (raw === "no" || raw === "n") return "2";
+  // ✅ Inglese (legacy)
+  if (raw === "yes" || raw === "y" || raw === "true") return "1";
+  if (raw === "n" || raw === "false") return "2";
 
-  // Accept numeric choices as-is
+  // ✅ Multi-opzione (listener)
   if (raw === "1" || raw === "2" || raw === "3" || raw === "4") return raw;
 
   return "";
@@ -213,18 +213,24 @@ exports.handler = async (event) => {
     const insertData = await insertRes.json().catch(() => null);
 
     if (!insertRes.ok) {
-      // With unique index (question_id, voter_hash) a double vote should be 409.
-      const pgCode = insertData && (insertData.code || insertData?.details?.code);
+      // With unique index (question_id, voter_hash) a double vote should be 409,
+      // or Postgres unique violation code 23505 in the response payload.
+      const pgCode = insertData && insertData.code;
+
       if (insertRes.status === 409 || pgCode === "23505") {
         return json(200, { ok: true, already_voted: true, flow }, cors);
       }
 
-      return json(insertRes.status, {
-        ok: false,
-        error: "supabase_error",
-        status: insertRes.status,
-        data: insertData,
-      }, cors);
+      return json(
+        insertRes.status,
+        {
+          ok: false,
+          error: "supabase_error",
+          status: insertRes.status,
+          data: insertData,
+        },
+        cors
+      );
     }
 
     return json(200, { ok: true, saved: true, question_id, choice, token_id, flow }, cors);
