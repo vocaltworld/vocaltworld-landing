@@ -306,7 +306,9 @@ function microRowKey(r) {
   // ---------------------------
   const [isExportOpen, setIsExportOpen] = useState(false);
   const [exportMain, setExportMain] = useState(true);
-  const [exportMicro, setExportMicro] = useState(true);
+  // Micro-polls export separati (Speaker / Listener)
+  const [exportMicroSpeaker, setExportMicroSpeaker] = useState(true);
+  const [exportMicroListener, setExportMicroListener] = useState(true);
 
   function pad2(n) {
     return String(n).padStart(2, "0");
@@ -429,19 +431,76 @@ function microRowKey(r) {
         downloadTextFile(`vocaltworld_dashboard_${stamp}.csv`, csv);
       }
 
-      if (exportMicro) {
-        const selectedQ = microQuestions.find(
-          (q) => String(q?.id || "") === String(microSelectedId || "")
+      // Helper: trova domanda per flow (speaker/listener)
+      const findQuestionByFlow = (flow) => {
+        const f = String(flow || "").toLowerCase();
+        const byFlow = (microQuestions || []).find(
+          (q) => String(q?.flow || "").toLowerCase() === f
+        );
+        if (byFlow) return byFlow;
+
+        // fallback: prova a inferire dal campaign_label/campaign_key
+        const byLabel = (microQuestions || []).find((q) => {
+          const key = String(q?.campaign_key || "").toLowerCase();
+          const label = String(q?.campaign_label || "").toLowerCase();
+          return key.includes(f) || label.includes(f);
+        });
+        if (byLabel) return byLabel;
+
+        return null;
+      };
+
+      // Helper: fetch export results on-demand (così non dipende dalla selezione corrente)
+      const fetchMicroExport = async (questionId) => {
+        const { res, data } = await fetchJsonWithFallback(
+          `/api/admin-micro-polls?mode=results&question_id=${encodeURIComponent(questionId)}`,
+          { method: "GET" }
         );
 
-        const csv = buildMicroPollCsv({
-          question: selectedQ,
-          rows: microRows,
-          stats: microStats,
-        });
+        if (res.status === 401) {
+          throw new Error("Codice segreto non valido (micro-polls). ");
+        }
 
-        const qIdShort = String(microSelectedId || "micro").slice(0, 6);
-        downloadTextFile(`vocaltworld_micro_poll_${qIdShort}_${stamp}.csv`, csv);
+        if (!res.ok || !data?.ok) {
+          throw new Error(data?.error || "Errore nel caricamento risultati micro-poll");
+        }
+
+        return {
+          stats: data.stats || null,
+          rows: Array.isArray(data.rows) ? data.rows : [],
+        };
+      };
+
+      // Export SPEAKER
+      if (exportMicroSpeaker) {
+        const speakerQ = findQuestionByFlow("speaker");
+        const qid = String(speakerQ?.id || "");
+        if (qid) {
+          const { rows, stats } = await fetchMicroExport(qid);
+          const csv = buildMicroPollCsv({
+            question: speakerQ,
+            rows,
+            stats,
+          });
+          const qIdShort = qid.slice(0, 6);
+          downloadTextFile(`vocaltworld_micro_poll_speaker_${qIdShort}_${stamp}.csv`, csv);
+        }
+      }
+
+      // Export LISTENER
+      if (exportMicroListener) {
+        const listenerQ = findQuestionByFlow("listener");
+        const qid = String(listenerQ?.id || "");
+        if (qid) {
+          const { rows, stats } = await fetchMicroExport(qid);
+          const csv = buildMicroPollCsv({
+            question: listenerQ,
+            rows,
+            stats,
+          });
+          const qIdShort = qid.slice(0, 6);
+          downloadTextFile(`vocaltworld_micro_poll_listener_${qIdShort}_${stamp}.csv`, csv);
+        }
       }
 
       setIsExportOpen(false);
@@ -1458,10 +1517,26 @@ const onVisibility = () => {
               </label>
 
               <label style={{ display: "flex", gap: 10, alignItems: "center" }}>
-                <input type="checkbox" checked={exportMicro} onChange={(e) => setExportMicro(e.target.checked)} />
+                <input
+                  type="checkbox"
+                  checked={exportMicroSpeaker}
+                  onChange={(e) => setExportMicroSpeaker(e.target.checked)}
+                />
                 <div>
                   <div style={{ fontWeight: 800 }}>Micro-poll (Email 3 — Speaker)</div>
-                  <div style={{ fontSize: 12, opacity: 0.75 }}>Domanda selezionata + SI/NO + elenco risposte</div>
+                  <div style={{ fontSize: 12, opacity: 0.75 }}>SI/NO + elenco risposte (file separato)</div>
+                </div>
+              </label>
+
+              <label style={{ display: "flex", gap: 10, alignItems: "center" }}>
+                <input
+                  type="checkbox"
+                  checked={exportMicroListener}
+                  onChange={(e) => setExportMicroListener(e.target.checked)}
+                />
+                <div>
+                  <div style={{ fontWeight: 800 }}>Micro-poll (Email 3 — Listener)</div>
+                  <div style={{ fontSize: 12, opacity: 0.75 }}>4 opzioni + elenco risposte (file separato)</div>
                 </div>
               </label>
 
@@ -1471,7 +1546,8 @@ const onVisibility = () => {
                   className="admin-logout-btn"
                   onClick={() => {
                     setExportMain(true);
-                    setExportMicro(true);
+                    setExportMicroSpeaker(true);
+                    setExportMicroListener(true);
                   }}
                   style={{ opacity: 0.9 }}
                 >
@@ -1482,9 +1558,9 @@ const onVisibility = () => {
                   type="button"
                   className="admin-logout-btn"
                   onClick={doExport}
-                  disabled={!exportMain && !exportMicro}
+                  disabled={!exportMain && !exportMicroSpeaker && !exportMicroListener}
                   style={{
-                    opacity: !exportMain && !exportMicro ? 0.5 : 1,
+                    opacity: !exportMain && !exportMicroSpeaker && !exportMicroListener ? 0.5 : 1,
                     background: "rgba(34, 197, 94, 0.18)",
                     border: "1px solid rgba(34, 197, 94, 0.35)",
                   }}
