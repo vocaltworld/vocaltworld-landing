@@ -166,6 +166,18 @@ exports.handler = async (event) => {
     const question_id = String(decoded?.q || "").trim();
     const token_id = String(decoded?.t || decoded?.tid || "").trim();
     const exp = Number(decoded?.exp || 0);
+
+    // Flow support (speaker/listener/pioneer) for admin filtering
+    const flowRaw = String(
+      payload.flow || payload.f || decoded?.f || decoded?.flow || "speaker"
+    )
+      .trim()
+      .toLowerCase();
+
+    const flow = ["speaker", "listener", "pioneer"].includes(flowRaw)
+      ? flowRaw
+      : "speaker";
+
     // NOTE: exp is stored in ms (Date.now()), so compare directly.
 
     // Privacy-friendly stable identifier for uniqueness (same email => same hash)
@@ -195,7 +207,7 @@ exports.handler = async (event) => {
         // `choice` is stored as a string: "1".."4" (legacy yes/no are normalized to 1/2).
         Prefer: "return=representation",
       },
-      body: JSON.stringify({ question_id, choice, token_id, voter_hash, email }),
+      body: JSON.stringify({ question_id, choice, token_id, voter_hash, email, flow }),
     });
 
     const insertData = await insertRes.json().catch(() => null);
@@ -204,7 +216,7 @@ exports.handler = async (event) => {
       // With unique index (question_id, voter_hash) a double vote should be 409.
       const pgCode = insertData && (insertData.code || insertData?.details?.code);
       if (insertRes.status === 409 || pgCode === "23505") {
-        return json(200, { ok: true, already_voted: true }, cors);
+        return json(200, { ok: true, already_voted: true, flow }, cors);
       }
 
       return json(insertRes.status, {
@@ -215,7 +227,7 @@ exports.handler = async (event) => {
       }, cors);
     }
 
-    return json(200, { ok: true, saved: true, question_id, choice, token_id }, cors);
+    return json(200, { ok: true, saved: true, question_id, choice, token_id, flow }, cors);
   } catch (err) {
     return json(500, { ok: false, error: "internal_error", message: err?.message || String(err) }, cors);
   }
