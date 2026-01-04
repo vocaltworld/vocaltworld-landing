@@ -52,20 +52,67 @@ exports.handler = async function handler(event) {
 
   try {
     if (mode === "questions") {
-      const { data, error } = await sbGet(
+      // 1) Speaker (SI/NO) questions
+      const { data: baseData, error: baseErr } = await sbGet(
         `${SUPABASE_URL}/rest/v1/micro_questions?select=*&order=created_at.desc`,
         SERVICE_KEY
       );
-      if (error) throw error;
+      if (baseErr) throw baseErr;
 
-      // normalize a bit for UI convenience (without breaking existing fields)
-      const questions = Array.isArray(data)
-        ? data.map((q) => ({
-            ...q,
-            // stable label fallback
-            label: q?.question || q?.id,
-          }))
-        : [];
+      // 2) Listener (multi-choice) questions
+      // NOTE: table created for 1..4 options
+      const { data: multiData, error: multiErr } = await sbGet(
+        `${SUPABASE_URL}/rest/v1/micro_questions_multi?select=*&order=created_at.desc`,
+        SERVICE_KEY
+      );
+      if (multiErr) throw multiErr;
+
+      const baseQs = Array.isArray(baseData) ? baseData : [];
+      const multiQs = Array.isArray(multiData) ? multiData : [];
+
+      // Normalize into a unified shape for the UI.
+      // Keep existing fields to avoid breaking current speaker UI,
+      // but also expose option_1..option_4 for the multi-choice pill/labels.
+      const normalizedBase = baseQs.map((q) => ({
+        ...q,
+        label: q?.question || q?.id,
+        // unified option fields
+        option_1: q?.option_yes ?? "Sì",
+        option_2: q?.option_no ?? "No",
+        option_3: "",
+        option_4: "",
+        campaign_key: q?.campaign_key ?? "speaker",
+        _source: "micro_questions",
+      }));
+
+      const normalizedMulti = multiQs.map((q) => {
+        // options may be a Postgres text[] or JSON array
+        const opts = Array.isArray(q?.options)
+          ? q.options
+          : typeof q?.options === "string"
+          ? (() => {
+              try {
+                const parsed = JSON.parse(q.options);
+                return Array.isArray(parsed) ? parsed : [];
+              } catch {
+                return [];
+              }
+            })()
+          : [];
+
+        return {
+          ...q,
+          label: q?.question || q?.id,
+          option_1: opts[0] ?? "Opzione 1",
+          option_2: opts[1] ?? "Opzione 2",
+          option_3: opts[2] ?? "",
+          option_4: opts[3] ?? "",
+          campaign_key: q?.campaign_key ?? "listener",
+          _source: "micro_questions_multi",
+        };
+      });
+
+      const questions = [...normalizedBase, ...normalizedMulti];
 
       return json(200, { ok: true, questions }, origin);
     }
