@@ -3,9 +3,11 @@ import React, { useEffect, useMemo, useState } from "react";
 export default function MicroPoll() {
   const [status, setStatus] = useState("idle"); // idle | saving | saved | already | error
   const [err, setErr] = useState("");
+  // Supporto link /micro?question_id=...&email=... (senza token in URL)
+  const [tokenOverride, setTokenOverride] = useState("");
 
   const url = typeof window !== "undefined" ? window.location.href : "";
-  const token = useMemo(() => {
+  const tokenFromUrl = useMemo(() => {
     try {
       const u = new URL(url);
       return u.searchParams.get("token") || "";
@@ -14,10 +16,18 @@ export default function MicroPoll() {
     }
   }, [url]);
 
+  const effectiveToken = tokenOverride || tokenFromUrl;
+
   const questionId = useMemo(() => {
-    // path tipo /poll/direction-v1
+    // Supporta:
+    // - /poll/<id>
+    // - /micro?question_id=<uuid>
     try {
       const u = new URL(url);
+
+      const qid = u.searchParams.get("question_id") || u.searchParams.get("qid") || "";
+      if (qid) return qid;
+
       const parts = u.pathname.split("/").filter(Boolean);
       const idx = parts.indexOf("poll");
       return idx >= 0 ? (parts[idx + 1] || "") : "";
@@ -45,12 +55,13 @@ export default function MicroPoll() {
   }
 
   const tokenPayload = useMemo(() => {
-    if (!token) return null;
-    const [data] = String(token).split(".");
+    if (!tokenFromUrl && !tokenOverride) return null;
+    const raw = tokenOverride || tokenFromUrl;
+    const [data] = String(raw).split(".");
     if (!data) return null;
     const txt = base64urlToString(data);
     return safeJsonParse(txt);
-  }, [token]);
+  }, [tokenFromUrl, tokenOverride]);
 
   const mode = useMemo(() => {
     // Priorità: querystring -> token payload -> default
@@ -139,7 +150,7 @@ export default function MicroPoll() {
   }, [url, tokenPayload]);
 
   const submitVote = async (choice) => {
-    if (!token) {
+    if (!effectiveToken) {
       setStatus("error");
       setErr("Token mancante. Apri il link dall’email.");
       return;
@@ -155,7 +166,7 @@ export default function MicroPoll() {
       const res = await fetch("/.netlify/functions/micro-poll-vote", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ token, choice }),
+        body: JSON.stringify({ token: effectiveToken, choice }),
       });
 
       const data = await res.json().catch(() => ({}));
@@ -169,6 +180,96 @@ export default function MicroPoll() {
       setErr(e?.message || "Errore inatteso");
     }
   };
+  // Se arrivi da un link "pulito" senza token (es: /micro?question_id=...&email=...),
+  // chiediamo alla function di generarci un token e poi procediamo normalmente.
+  useEffect(() => {
+    let cancelled = false;
+
+    const hydrateTokenIfNeeded = async () => {
+      if (effectiveToken) return;
+
+      let u;
+      try {
+        u = new URL(url);
+      } catch {
+        return;
+      }
+
+      const qid = (u.searchParams.get("question_id") || "").trim();
+      const email = (u.searchParams.get("email") || "").trim();
+
+      // Senza questi due non possiamo generare un token lato server
+      if (!qid || !email) return;
+
+      const flowParam = (u.searchParams.get("flow") || "").trim();
+      const modeParam = (u.searchParams.get("mode") || u.searchParams.get("m") || "").trim();
+
+      const qs = new URLSearchParams();
+      qs.set("question_id", qid);
+      qs.set("email", email);
+      if (flowParam) qs.set("flow", flowParam);
+      if (modeParam) qs.set("mode", modeParam);
+
+      try {
+        // Proviamo prima una risposta JSON (se la function la supporta).
+        // Se invece risponde con redirect, lo seguiamo.
+        const res = await fetch(`/.netlify/functions/micro-poll-link?${qs.toString()}`, {
+          method: "GET",
+          redirect: "manual",
+          headers: { Accept: "application/json" },
+        });
+
+        // Redirect server-side: vai alla Location
+        if (res.status >= 300 && res.status < 400) {
+          const loc = res.headers.get("Location");
+          if (loc) {
+            window.location.href = loc;
+            return;
+          }
+        }
+
+        // Se è JSON e contiene token, usiamolo senza cambiare URL (fallback)
+        const data = await res.json().catch(() => null);
+        if (!data) throw new Error("Risposta non valida");
+
+        const t = data.token || data.t || "";
+        if (!t) throw new Error(data.error || "Token non generato");
+
+        if (!cancelled) {
+          setTokenOverride(String(t));
+
+          // opzionale: se la function ci passa testo/opzioni, li usiamo
+          if (data.question_text || data.question) {
+            setQuestionText(String(data.question_text || data.question));
+          }
+          if (Array.isArray(data.options)) {
+            setOptions((prev) => ({ ...prev, multi: data.options.map((x) => String(x)) }));
+          }
+          if (data.option_yes || data.option_no) {
+            setOptions((prev) => ({
+              ...prev,
+              yn: {
+                yes: String(data.option_yes || prev.yn.yes),
+                no: String(data.option_no || prev.yn.no),
+              },
+            }));
+          }
+        }
+      } catch (e) {
+        if (!cancelled) {
+          setStatus("error");
+          setErr(e?.message || "Errore nel caricamento del micro-sondaggio");
+        }
+      }
+    };
+
+    hydrateTokenIfNeeded();
+
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [url, effectiveToken]);
 
   return (
     <div style={{ minHeight: "100vh", background: "#020308", color: "#fff", display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }}>
@@ -236,6 +337,7 @@ export default function MicroPoll() {
           ID domanda: {questionId || "-"}
           {mode ? ` • mode: ${mode}` : ""}
           {flow ? ` • flow: ${flow}` : ""}
+          {(tokenFromUrl || tokenOverride) ? " • token: ok" : " • token: -"}
         </div>
       </div>
     </div>

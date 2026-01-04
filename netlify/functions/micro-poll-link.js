@@ -58,6 +58,13 @@ async function loadMicroQuestion(questionId) {
       questionId
     )}&limit=1`
   );
+  // Defensive: legacy table must have option_yes/option_no (not option_1..4)
+  if (Array.isArray(rows2) && rows2.length) {
+    const r = rows2[0];
+    if (r && (r.option_yes === undefined || r.option_no === undefined)) {
+      throw new Error("Legacy micro_questions schema mismatch: expected option_yes/option_no");
+    }
+  }
   if (!Array.isArray(rows2) || !rows2.length) {
     return null;
   }
