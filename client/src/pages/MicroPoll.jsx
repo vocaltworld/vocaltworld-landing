@@ -18,6 +18,12 @@ export default function MicroPoll() {
 
   const effectiveToken = tokenOverride || tokenFromUrl;
 
+  // ⚙️ Fallback hardening: if links/redirects lose flow/mode, infer from known question ids.
+  // This prevents showing Sì/No for listener multi-option questions.
+  const MULTI_QUESTION_IDS = new Set([
+    "bce70204-ab86-4e90-8f0f-53e08b77edd3", // listener (multi)
+  ]);
+
   const questionId = useMemo(() => {
     // Supporta:
     // - /poll/<id>
@@ -96,7 +102,10 @@ export default function MicroPoll() {
   }, [url, tokenPayload]);
 
   const mode = useMemo(() => {
-    // 1) Se il flow è chiaro, lo usiamo come sorgente primaria per evitare "mischioni"
+    // 0) Strong inference by question id (if flow/mode are missing due to redirect/link issues)
+    if (questionId && MULTI_QUESTION_IDS.has(String(questionId).trim())) return "multi";
+
+    // 1) If flow is clear, use it as primary source
     const f = String(flow || "").trim().toLowerCase();
     if (f === "listener") return "multi";
     if (f === "speaker" || f === "pioneer") return "yn";
@@ -112,13 +121,21 @@ export default function MicroPoll() {
       // ignore
     }
 
+    // token payload hint
     const m2 = String(tokenPayload?.m || tokenPayload?.mode || "")
       .trim()
       .toLowerCase();
     if (m2 === "multi" || m2 === "yn") return m2;
 
+    // last-resort: infer from token payload flow
+    const f2 = String(tokenPayload?.f || tokenPayload?.flow || "")
+      .trim()
+      .toLowerCase();
+    if (f2 === "listener") return "multi";
+    if (f2 === "speaker" || f2 === "pioneer") return "yn";
+
     return "yn";
-  }, [url, tokenPayload, flow]);
+  }, [url, tokenPayload, flow, questionId]);
 
   // Domanda + opzioni (fallback safe: non rompe nulla se non arrivano dati extra)
   const [questionText, setQuestionText] = useState(
@@ -243,6 +260,13 @@ export default function MicroPoll() {
       // Senza questi due non possiamo generare un token lato server
       if (!qid || !email) return;
 
+      // If user opens a "clean" link without flow/mode, infer from question id
+      let inferredFlow = normalizedFlow;
+      if (!inferredFlow && MULTI_QUESTION_IDS.has(qid)) inferredFlow = "listener";
+
+      let inferredMode = String(modeParam || "").trim().toLowerCase();
+      if (!inferredMode) inferredMode = inferredFlow === "listener" ? "multi" : "yn";
+
       const qs = new URLSearchParams();
       qs.set("question_id", qid);
       qs.set("email", email);
@@ -251,14 +275,11 @@ export default function MicroPoll() {
         ? flowParam.toLowerCase()
         : "";
 
-      if (normalizedFlow) qs.set("flow", normalizedFlow);
+      if (inferredFlow) qs.set("flow", inferredFlow);
 
       // Se non è stato passato mode, lo deduciamo dal flow (listener => multi, altrimenti yn)
-      const normalizedMode = String(modeParam || "").trim().toLowerCase();
-      if (normalizedMode) {
-        qs.set("mode", normalizedMode);
-      } else if (normalizedFlow) {
-        qs.set("mode", normalizedFlow === "listener" ? "multi" : "yn");
+      if (inferredMode === "multi" || inferredMode === "yn") {
+        qs.set("mode", inferredMode);
       }
 
       try {
