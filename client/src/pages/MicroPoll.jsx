@@ -64,15 +64,33 @@ export default function MicroPoll() {
   }, [tokenFromUrl, tokenOverride]);
 
   const mode = useMemo(() => {
-    // Priorità: querystring -> token payload -> default
+    // Priorità: querystring -> token payload -> flow -> default
     try {
       const u = new URL(url);
-      const m = String(u.searchParams.get("mode") || u.searchParams.get("m") || "").trim().toLowerCase();
+      const m = String(
+        u.searchParams.get("mode") || u.searchParams.get("m") || ""
+      )
+        .trim()
+        .toLowerCase();
       if (m) return m;
+
+      // Se non c'è mode esplicito, deduciamo dal flow in URL
+      const flowQ = String(u.searchParams.get("flow") || "")
+        .trim()
+        .toLowerCase();
+      if (flowQ === "listener") return "multi";
     } catch {}
 
-    const m2 = String(tokenPayload?.m || tokenPayload?.mode || "").trim().toLowerCase();
+    const m2 = String(tokenPayload?.m || tokenPayload?.mode || "")
+      .trim()
+      .toLowerCase();
     if (m2) return m2;
+
+    // Se non c'è mode nel token, deduciamo dal flow nel token
+    const flowT = String(tokenPayload?.f || tokenPayload?.flow || "")
+      .trim()
+      .toLowerCase();
+    if (flowT === "listener") return "multi";
 
     return "yn"; // compatibilità: Speaker (SI/NO)
   }, [url, tokenPayload]);
