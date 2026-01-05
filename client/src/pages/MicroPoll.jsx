@@ -80,6 +80,24 @@ export default function MicroPoll() {
     multi: ["Opzione 1", "Opzione 2", "Opzione 3", "Opzione 4"],
   });
 
+  // ---- UI: selection + confirm modal (NO window.confirm)
+  const [selectedChoice, setSelectedChoice] = useState("");
+  const [confirmOpen, setConfirmOpen] = useState(false);
+  const [pendingChoice, setPendingChoice] = useState(null);
+  const [pendingLabel, setPendingLabel] = useState("");
+
+  const openConfirm = (choice, label) => {
+    setPendingChoice(String(choice));
+    setPendingLabel(String(label || ""));
+    setConfirmOpen(true);
+  };
+
+  const closeConfirm = () => {
+    setConfirmOpen(false);
+    setPendingChoice(null);
+    setPendingLabel("");
+  };
+
   // ---- If coming with clean link (no token): generate token via server and redirect OR set tokenOverride
   useEffect(() => {
     let cancelled = false;
@@ -200,9 +218,6 @@ export default function MicroPoll() {
       setErr("Token mancante. Apri il link dall’email.");
       return;
     }
-
-    const ok = window.confirm("Sei sicuro della tua risposta? Non potrai cambiarla.");
-    if (!ok) return;
 
     try {
       setStatus("saving");
@@ -335,9 +350,15 @@ export default function MicroPoll() {
               return (
                 <button
                   key={choice}
-                  onClick={() => submitVote(choice)}
+                  onClick={() => {
+                    setSelectedChoice(choice);
+                    openConfirm(choice, label || `Opzione ${idx + 1}`);
+                  }}
                   disabled={disabled}
-                  style={btnMulti}
+                  style={{
+                    ...btnMulti,
+                    ...(selectedChoice === choice ? styles.optionSelected : null),
+                  }}
                 >
                   {label || `Opzione ${idx + 1}`}
                 </button>
@@ -347,51 +368,233 @@ export default function MicroPoll() {
         ) : (
           <div style={{ display: "flex", gap: 12 }}>
             <button
-              onClick={() => submitVote("1")}
+              onClick={() => {
+                setSelectedChoice("1");
+                openConfirm("1", options.yn?.yes || "Sì");
+              }}
               disabled={disabled}
-              style={{ ...btnYes, flex: 1 }}
+              style={{
+                ...btnYes,
+                flex: 1,
+                ...(selectedChoice === "1" ? styles.optionSelectedYn : null),
+              }}
             >
               {options.yn?.yes || "Sì"}
             </button>
 
             <button
-              onClick={() => submitVote("2")}
+              onClick={() => {
+                setSelectedChoice("2");
+                openConfirm("2", options.yn?.no || "No");
+              }}
               disabled={disabled}
-              style={{ ...btnNo, flex: 1 }}
+              style={{
+                ...btnNo,
+                flex: 1,
+                ...(selectedChoice === "2" ? styles.optionSelectedYn : null),
+              }}
             >
               {options.yn?.no || "No"}
             </button>
           </div>
         )}
 
-        <div
-          style={{
-            marginTop: 14,
-            textAlign: "center",
-            minHeight: 22,
-            color: "rgba(255,255,255,0.8)",
-          }}
-        >
-          {status === "saving" && "Sto salvando…"}
-          {status === "saved" && "Risposta salvata ✅ Grazie."}
-          {status === "already" && "Hai già partecipato ✅"}
-          {status === "error" && (
-            <span style={{ color: "#ff7b7b" }}>Errore: {err}</span>
-          )}
-        </div>
+        {confirmOpen && (
+          <div style={styles.modalOverlay} onClick={closeConfirm}>
+            <div style={styles.modal} onClick={(e) => e.stopPropagation()}>
+              <div style={styles.modalTitle}>Confermi la tua scelta?</div>
+              <div style={styles.modalText}>Non potrai cambiarla.</div>
+              {pendingLabel ? (
+                <div style={styles.modalChoice}>
+                  “{pendingLabel}”
+                </div>
+              ) : null}
 
-        <div
-          style={{
-            marginTop: 10,
-            textAlign: "center",
-            color: "rgba(255,255,255,0.35)",
-            fontSize: 12,
-          }}
-        >
-          ID domanda: {questionId || "-"} • mode: {mode || "-"} • flow:{" "}
-          {flow || "-"} • token: {effectiveToken ? "ok" : "-"}
+              <div style={styles.modalActions}>
+                <button style={styles.modalBtnGhost} onClick={closeConfirm}>
+                  Annulla
+                </button>
+                <button
+                  style={styles.modalBtnPrimary}
+                  onClick={() => {
+                    const c = pendingChoice;
+                    closeConfirm();
+                    if (c) submitVote(String(c));
+                  }}
+                >
+                  OK
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        <div style={{ marginTop: 14 }}>
+          {status === "saving" && (
+            <div style={styles.notice}>Sto salvando…</div>
+          )}
+
+          {status === "saved" && (
+            <div style={styles.resultWrap}>
+              <div style={styles.checkCircle}>✓</div>
+              <div style={styles.resultTitle}>Risposta salvata con successo ✅</div>
+              <div style={styles.resultSub}>Grazie! La tua risposta è stata registrata.</div>
+            </div>
+          )}
+
+          {status === "already" && (
+            <div style={styles.resultWrap}>
+              <div style={styles.infoCircle}>i</div>
+              <div style={styles.resultTitle}>Hai già votato</div>
+              <div style={styles.resultSub}>Questo link è valido per una sola risposta.</div>
+            </div>
+          )}
+
+          {status === "error" && (
+            <div style={styles.errorBox}>Errore: {err}</div>
+          )}
         </div>
       </div>
     </div>
   );
 }
+
+const styles = {
+  // selection highlight
+  optionSelected: {
+    border: "1px solid rgba(120,180,255,0.55)",
+    background:
+      "linear-gradient(90deg, rgba(120,180,255,0.22), rgba(255,255,255,0.10))",
+    transform: "scale(1.01)",
+  },
+  optionSelectedYn: {
+    boxShadow: "0 0 0 3px rgba(120,180,255,0.18)",
+  },
+
+  // modal
+  modalOverlay: {
+    position: "fixed",
+    inset: 0,
+    background: "rgba(0,0,0,0.60)",
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "center",
+    zIndex: 9999,
+    padding: 16,
+  },
+  modal: {
+    width: "min(520px, 100%)",
+    borderRadius: 18,
+    border: "1px solid rgba(255,255,255,0.10)",
+    background: "rgba(14,16,20,0.92)",
+    backdropFilter: "blur(16px)",
+    padding: 18,
+    boxShadow: "0 20px 70px rgba(0,0,0,0.55)",
+  },
+  modalTitle: {
+    fontSize: 16,
+    fontWeight: 900,
+    color: "rgba(255,255,255,0.92)",
+    marginBottom: 6,
+  },
+  modalText: {
+    fontSize: 13,
+    color: "rgba(255,255,255,0.70)",
+    lineHeight: 1.5,
+  },
+  modalChoice: {
+    marginTop: 12,
+    padding: "10px 12px",
+    borderRadius: 12,
+    background: "rgba(255,255,255,0.06)",
+    border: "1px solid rgba(255,255,255,0.10)",
+    color: "rgba(255,255,255,0.88)",
+    fontWeight: 800,
+    textAlign: "center",
+  },
+  modalActions: {
+    marginTop: 14,
+    display: "flex",
+    justifyContent: "flex-end",
+    gap: 10,
+  },
+  modalBtnGhost: {
+    padding: "10px 14px",
+    borderRadius: 12,
+    border: "1px solid rgba(255,255,255,0.12)",
+    background: "rgba(255,255,255,0.06)",
+    color: "rgba(255,255,255,0.85)",
+    fontWeight: 800,
+    cursor: "pointer",
+  },
+  modalBtnPrimary: {
+    padding: "10px 14px",
+    borderRadius: 12,
+    border: "1px solid rgba(120,180,255,0.55)",
+    background: "rgba(120,180,255,0.18)",
+    color: "rgba(255,255,255,0.92)",
+    fontWeight: 900,
+    cursor: "pointer",
+  },
+
+  // feedback
+  notice: {
+    textAlign: "center",
+    color: "rgba(255,255,255,0.80)",
+    minHeight: 22,
+  },
+  resultWrap: {
+    marginTop: 0,
+    padding: "16px 14px",
+    borderRadius: 16,
+    border: "1px solid rgba(255,255,255,0.10)",
+    background: "rgba(255,255,255,0.05)",
+    textAlign: "center",
+  },
+  checkCircle: {
+    width: 44,
+    height: 44,
+    borderRadius: 999,
+    margin: "0 auto",
+    display: "grid",
+    placeItems: "center",
+    border: "2px solid rgba(90,220,160,0.55)",
+    color: "rgba(90,220,160,0.95)",
+    fontWeight: 900,
+    fontSize: 22,
+  },
+  infoCircle: {
+    width: 44,
+    height: 44,
+    borderRadius: 999,
+    margin: "0 auto",
+    display: "grid",
+    placeItems: "center",
+    border: "2px solid rgba(120,180,255,0.55)",
+    color: "rgba(255,255,255,0.85)",
+    fontWeight: 900,
+    fontSize: 18,
+  },
+  resultTitle: {
+    marginTop: 10,
+    fontSize: 16,
+    fontWeight: 900,
+    color: "rgba(255,255,255,0.92)",
+  },
+  resultSub: {
+    marginTop: 6,
+    fontSize: 13,
+    color: "rgba(255,255,255,0.70)",
+    lineHeight: 1.4,
+  },
+  errorBox: {
+    marginTop: 0,
+    padding: "12px 12px",
+    borderRadius: 14,
+    border: "1px solid rgba(255,123,123,0.22)",
+    background: "rgba(255,123,123,0.08)",
+    color: "#ff7b7b",
+    fontWeight: 800,
+    textAlign: "center",
+  },
+};
