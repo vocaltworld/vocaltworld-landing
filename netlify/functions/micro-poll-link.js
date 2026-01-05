@@ -37,10 +37,10 @@ async function supabaseGet(path) {
 }
 
 async function loadMicroQuestion(questionId) {
-  // ✅ UNIFICATO: una sola tabella `public.micro_questions`
-  // Colonne attese (minime): id, question, kind ('yn'|'multi'), options (json/array), option_yes, option_no, flow, active, created_at
+  // ✅ Tabella: public.micro_questions
+  // Colonne attese: id, question, kind ('binary'|'multi'), options (text[]), flow, active, created_at
   const rows = await supabaseGet(
-    `/rest/v1/micro_questions?select=id,question,kind,options,option_yes,option_no,flow,active,created_at&id=eq.${encodeURIComponent(
+    `/rest/v1/micro_questions?select=id,question,kind,options,flow,active,created_at&id=eq.${encodeURIComponent(
       questionId
     )}&limit=1`
   );
@@ -50,24 +50,17 @@ async function loadMicroQuestion(questionId) {
   const row = rows[0] || {};
   const kind = String(row.kind || "").trim().toLowerCase();
 
-  // Determiniamo la modalità in modo robusto:
-  // - se kind è 'multi' -> multi
-  // - altrimenti se options è un array con >=2 elementi -> multi
-  // - fallback -> yn
   const hasOptionsArray = Array.isArray(row.options) && row.options.length >= 2;
-  const mode = kind === "multi" || hasOptionsArray ? "multi" : "yn";
 
-  // Validazioni minime per evitare mismatch silenziosi
-  if (mode === "yn") {
-    // Deve avere option_yes e option_no
-    if (row.option_yes === undefined || row.option_no === undefined) {
-      throw new Error("micro_questions schema mismatch: expected option_yes/option_no for kind=yn");
-    }
-  } else {
-    // Deve avere options array
-    if (!hasOptionsArray) {
-      throw new Error("micro_questions schema mismatch: expected options[] for kind=multi");
-    }
+  // ✅ Mappa DB -> mode frontend
+  // - multi -> multi
+  // - binary -> yn
+  // - fallback: se options[] >= 2 => multi altrimenti yn
+  const mode = kind === "multi" || (kind !== "binary" && hasOptionsArray) ? "multi" : "yn";
+
+  // Validazione minima
+  if (mode === "multi" && !hasOptionsArray) {
+    throw new Error("micro_questions schema mismatch: expected options[] (>=2) for kind=multi");
   }
 
   return { mode, row };
@@ -253,6 +246,18 @@ exports.handler = async (event) => {
         qs.redirectBase ||
         "https://survey.vocaltworld.com"
     );
+    // ✅ Shortcut: se arriva già un token, facciamo solo redirect/JSON senza richiedere question_id/email
+const tokenFromQs = String(qs.token || payload.token || "").trim();
+if (tokenFromQs) {
+  const url = `${redirectBase}/micro?token=${encodeURIComponent(tokenFromQs)}`;
+  const headers = corsHeaders(origin);
+  const format = String(qs.format || "").toLowerCase();
+
+  if (event.httpMethod === "GET" && format !== "json") {
+    return redirect(302, url, headers);
+  }
+  return json(200, { ok: true, token: tokenFromQs, redirect: url }, headers);
+}
 
     if (!questionId) return json(400, { ok: false, error: "Missing question_id" }, corsHeaders(origin));
     if (!email) return json(400, { ok: false, error: "Missing/invalid email" }, corsHeaders(origin));
@@ -288,9 +293,7 @@ const effectiveMode = String(q.mode || "yn").trim().toLowerCase();
     const token = `${signingInput}.${sigB64}`;
 
     // URL completo della pagina voto (usato solo per redirect)
-    const url = `${redirectBase}/micro?token=${encodeURIComponent(token)}&flow=${encodeURIComponent(
-      effectiveFlow
-    )}&mode=${encodeURIComponent(effectiveMode)}`;
+   const url = `${redirectBase}/micro?token=${encodeURIComponent(token)}`;
 
     const headers = corsHeaders(origin);
 
@@ -305,10 +308,9 @@ const effectiveMode = String(q.mode || "yn").trim().toLowerCase();
     // Normalizzo payload per il client
     const questionText = String(q.row.question || "");
     const options =
-      q.mode === "multi"
-        ? (Array.isArray(q.row.options) ? q.row.options : [])
-        : [String(q.row.option_yes || "Sì"), String(q.row.option_no || "No")];
-
+  q.mode === "multi"
+    ? (Array.isArray(q.row.options) ? q.row.options : [])
+    : ["Sì", "No"];
     return json(
       200,
       {

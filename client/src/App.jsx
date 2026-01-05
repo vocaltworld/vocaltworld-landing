@@ -5,6 +5,7 @@ import SurveyForm from "./components/SurveyForm.jsx";
 import Footer from "./components/Footer.jsx";
 import AdminDashboard from "./components/AdminDashboard.jsx";
 import VotePage from "./components/VotePage.jsx";
+import MicroPoll from "./pages/MicroPoll.jsx";
 import { BrowserRouter, Routes, Route } from "react-router-dom";
 
 export default function App() {
@@ -22,6 +23,10 @@ export default function App() {
         <Route
           path="/poll/:questionId"
           element={<VotePage />}
+        />
+                <Route
+          path="/micro"
+          element={<MicroPoll />}
         />
 
         {/* LANDING PAGE — exactly the same structure and style */}

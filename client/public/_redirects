@@ -12,6 +12,8 @@
 /api/micro-poll-link /.netlify/functions/micro-poll-link 200
 /api/micro-poll-vote /.netlify/functions/micro-poll-vote 200
 /api/admin-micro-polls /.netlify/functions/admin-micro-polls 200
+/api/admin-dashboard /.netlify/functions/admin-dashboard 200
+
 
 
 # ✅ SPA fallback (deve stare sotto)
