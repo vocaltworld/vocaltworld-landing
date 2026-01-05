@@ -168,8 +168,9 @@ exports.handler = async (event) => {
     const exp = Number(decoded?.exp || 0);
 
     // Flow support (speaker/listener/pioneer) for admin filtering
+    // ✅ Prefer the flow embedded in the signed token (decoded) to avoid client-side mixups.
     const flowRaw = String(
-      payload.flow || payload.f || decoded?.f || decoded?.flow || "speaker"
+      decoded?.f || decoded?.flow || payload.flow || payload.f || "speaker"
     )
       .trim()
       .toLowerCase();
@@ -181,7 +182,10 @@ exports.handler = async (event) => {
     // NOTE: exp is stored in ms (Date.now()), so compare directly.
 
     // Privacy-friendly stable identifier for uniqueness (same email => same hash)
-    const voter_hash = crypto.createHash("sha256").update(email).digest("hex");
+    const voter_hash = crypto
+      .createHash("sha256")
+      .update(email || "")
+      .digest("hex");
 
     if (!email || !question_id || !token_id || !exp) {
       return json(400, { ok: false, error: "token_missing_fields" }, cors);
@@ -199,7 +203,7 @@ exports.handler = async (event) => {
 
     // 1) Pre-check: if a vote already exists for this (question_id, voter_hash) return early.
     // This prevents false "already_voted" when a 409 happens for a DIFFERENT constraint.
-    const checkUrl = `${baseEndpoint}?select=id,choice,created_at&question_id=eq.${encodeURIComponent(
+    const checkUrl = `${baseEndpoint}?select=id,choice,created_at,email,flow&question_id=eq.${encodeURIComponent(
       question_id
     )}&voter_hash=eq.${encodeURIComponent(voter_hash)}&limit=1`;
 
@@ -209,6 +213,7 @@ exports.handler = async (event) => {
         apikey: SERVICE_KEY,
         Authorization: `Bearer ${SERVICE_KEY}`,
         Accept: "application/json",
+        "Cache-Control": "no-store",
       },
     });
 
@@ -248,6 +253,7 @@ exports.handler = async (event) => {
             apikey: SERVICE_KEY,
             Authorization: `Bearer ${SERVICE_KEY}`,
             Accept: "application/json",
+            "Cache-Control": "no-store",
           },
         });
 

@@ -13,6 +13,45 @@ function formatDate(iso) {
   });
 }
 
+function safeArray(v) {
+  return Array.isArray(v) ? v : [];
+}
+
+function getQuestionMode(q) {
+  const m = String(q?.mode || q?.m || "").trim().toLowerCase();
+  if (m === "multi" || m === "yn") return m;
+  const opts = safeArray(q?.options || q?.option_labels || q?.optionLabels);
+  if (opts.length >= 3) return "multi";
+  const oc = Number(q?.option_count || q?.optionCount || 0);
+  if (oc >= 3) return "multi";
+  return "yn";
+}
+
+function getMultiLabels(q) {
+  const opts = safeArray(q?.options || q?.option_labels || q?.optionLabels);
+  const filled = [
+    opts[0] ?? "Opzione 1",
+    opts[1] ?? "Opzione 2",
+    opts[2] ?? "Opzione 3",
+    opts[3] ?? "Opzione 4",
+  ].map((x) => String(x));
+  return filled;
+}
+
+function choiceLabelForQuestion(q, choice) {
+  const c = String(choice ?? "").trim();
+  const mode = getQuestionMode(q);
+  if (mode === "multi") {
+    const labels = getMultiLabels(q);
+    const idx = Number(c) - 1;
+    if (idx >= 0 && idx < labels.length) return labels[idx];
+    return c || "-";
+  }
+  if (c === "1") return "SI";
+  if (c === "2") return "NO";
+  return c || "-";
+}
+
 export default function MicroPollsPanel({ adminKey }) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
@@ -48,11 +87,17 @@ export default function MicroPollsPanel({ adminKey }) {
 
       const data = await res.json();
       const list = Array.isArray(data.questions) ? data.questions : [];
-      setQuestions(list);
+      const sorted = [...list].sort((a, b) => {
+        const da = new Date(a?.created_at || a?.createdAt || 0).getTime();
+        const db = new Date(b?.created_at || b?.createdAt || 0).getTime();
+        return db - da;
+      });
+
+      setQuestions(sorted);
 
       // Se non hai selezione, prende la prima (più recente)
-      if (!selectedId && list.length > 0) {
-        setSelectedId(list[0].id);
+      if (!selectedId && sorted.length > 0) {
+        setSelectedId(sorted[0].id);
       }
     } catch (e) {
       setError(e?.message || "Errore inatteso");
@@ -129,7 +174,7 @@ export default function MicroPollsPanel({ adminKey }) {
         <div className="admin-header-left">
           <h1 className="admin-title">Micro Polls</h1>
           <p style={{ margin: "6px 0 0 0", opacity: 0.85 }}>
-            Seleziona una domanda e vedi SI/NO + risposte in tempo reale.
+            Seleziona una domanda e vedi i risultati in tempo reale.
           </p>
         </div>
 
@@ -193,21 +238,65 @@ export default function MicroPollsPanel({ adminKey }) {
             <span className="admin-stat-value">{stats.total}</span>
           </div>
 
-          <div className="admin-stat-card admin-stat-yes">
-            <span className="admin-stat-label">SI</span>
-            <span className="admin-stat-value">
-              {stats.yes}
-              <span className="admin-stat-sub"> ({stats.pctYes}%)</span>
-            </span>
-          </div>
+          {getQuestionMode(selected) === "multi" ? (
+            (() => {
+              const labels = getMultiLabels(selected);
+              const counts = stats.counts || stats.options || stats.breakdown || {};
+              const total = Number(stats.total || 0) || 0;
 
-          <div className="admin-stat-card admin-stat-no">
-            <span className="admin-stat-label">NO</span>
-            <span className="admin-stat-value">
-              {stats.no}
-              <span className="admin-stat-sub"> ({stats.pctNo}%)</span>
-            </span>
-          </div>
+              const getCount = (n) => {
+                const k1 = String(n);
+                const k2 = `opt${n}`;
+                const k3 = `o${n}`;
+                return Number(counts?.[k1] ?? counts?.[k2] ?? counts?.[k3] ?? 0) || 0;
+              };
+
+              const pct = (n) => (total ? Math.round((n / total) * 100) : 0);
+
+              return (
+                <>
+                  {[1, 2, 3, 4].map((n) => {
+                    const c = getCount(n);
+                    // usa le classi yes/no solo per stile: 1=verde, 2=rosso, le altre neutre
+                    const cls =
+                      n === 1
+                        ? "admin-stat-card admin-stat-yes"
+                        : n === 2
+                          ? "admin-stat-card admin-stat-no"
+                          : "admin-stat-card";
+
+                    return (
+                      <div key={n} className={cls}>
+                        <span className="admin-stat-label">{labels[n - 1] || `Opzione ${n}`}</span>
+                        <span className="admin-stat-value">
+                          {c}
+                          <span className="admin-stat-sub"> ({pct(c)}%)</span>
+                        </span>
+                      </div>
+                    );
+                  })}
+                </>
+              );
+            })()
+          ) : (
+            <>
+              <div className="admin-stat-card admin-stat-yes">
+                <span className="admin-stat-label">SI</span>
+                <span className="admin-stat-value">
+                  {stats.yes}
+                  <span className="admin-stat-sub"> ({stats.pctYes}%)</span>
+                </span>
+              </div>
+
+              <div className="admin-stat-card admin-stat-no">
+                <span className="admin-stat-label">NO</span>
+                <span className="admin-stat-value">
+                  {stats.no}
+                  <span className="admin-stat-sub"> ({stats.pctNo}%)</span>
+                </span>
+              </div>
+            </>
+          )}
         </div>
       )}
 
@@ -224,7 +313,7 @@ export default function MicroPollsPanel({ adminKey }) {
           <div className="admin-table-body">
             {rows.map((r, idx) => {
               const choice = String(r.choice);
-              const label = choice === "1" ? "SI" : choice === "2" ? "NO" : choice;
+              const label = choiceLabelForQuestion(selected, choice);
               const isYes = choice === "1";
 
               return (
@@ -234,7 +323,16 @@ export default function MicroPollsPanel({ adminKey }) {
                     {r.email || "-"}
                   </div>
                   <div className="admin-td admin-td-int">
-                    <span className={"admin-pill " + (isYes ? "admin-pill-yes" : "admin-pill-no")}>
+                    <span
+                      className={
+                        "admin-pill " +
+                        (getQuestionMode(selected) === "multi"
+                          ? ""
+                          : isYes
+                            ? "admin-pill-yes"
+                            : "admin-pill-no")
+                      }
+                    >
                       {label}
                     </span>
                   </div>

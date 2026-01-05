@@ -221,6 +221,7 @@ export default function MicroPoll() {
           token: effectiveToken,
           choice,
           flow,
+          mode,
           // inviamo anche question_id così il backend può bloccare mismatch tra token e pagina
           question_id: questionId,
         }),
@@ -254,33 +255,30 @@ export default function MicroPoll() {
 
       const qid = (u.searchParams.get("question_id") || "").trim();
       const email = (u.searchParams.get("email") || "").trim();
-      const flowParam = String(u.searchParams.get("flow") || "").trim();
-      const modeParam = (u.searchParams.get("mode") || u.searchParams.get("m") || "").trim();
 
       // Senza questi due non possiamo generare un token lato server
       if (!qid || !email) return;
+
+      const flowParam = String(u.searchParams.get("flow") || "").trim().toLowerCase();
+      const modeParam = String(u.searchParams.get("mode") || u.searchParams.get("m") || "")
+        .trim()
+        .toLowerCase();
+
+      const normalizedFlow = ["speaker", "listener", "pioneer"].includes(flowParam) ? flowParam : "";
 
       // If user opens a "clean" link without flow/mode, infer from question id
       let inferredFlow = normalizedFlow;
       if (!inferredFlow && MULTI_QUESTION_IDS.has(qid)) inferredFlow = "listener";
 
-      let inferredMode = String(modeParam || "").trim().toLowerCase();
+      // If mode missing, infer from flow
+      let inferredMode = modeParam;
       if (!inferredMode) inferredMode = inferredFlow === "listener" ? "multi" : "yn";
 
       const qs = new URLSearchParams();
       qs.set("question_id", qid);
       qs.set("email", email);
-
-      const normalizedFlow = ["speaker", "listener", "pioneer"].includes(flowParam.toLowerCase())
-        ? flowParam.toLowerCase()
-        : "";
-
       if (inferredFlow) qs.set("flow", inferredFlow);
-
-      // Se non è stato passato mode, lo deduciamo dal flow (listener => multi, altrimenti yn)
-      if (inferredMode === "multi" || inferredMode === "yn") {
-        qs.set("mode", inferredMode);
-      }
+      if (inferredMode === "multi" || inferredMode === "yn") qs.set("mode", inferredMode);
 
       try {
         // Proviamo prima una risposta JSON (se la function la supporta).
@@ -341,7 +339,7 @@ export default function MicroPoll() {
       cancelled = true;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [url, effectiveToken]);
+  }, [url, effectiveToken, mode]);
 
   return (
     <div style={{ minHeight: "100vh", background: "#020308", color: "#fff", display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }}>

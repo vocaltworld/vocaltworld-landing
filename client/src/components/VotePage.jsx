@@ -87,42 +87,24 @@ export default function VotePage() {
       }
 
       try {
-        // 1) Prova prima nello schema SI/NO (speaker): public.micro_questions
-        let data = null;
-        let qErr = null;
-
-        const ynRes = await supabase
+        // ✅ Unica tabella: public.micro_questions
+        const qRes = await supabase
           .from("micro_questions")
-          .select("id, question, active, option_yes, option_no, created_at")
+          .select("id, question, active, kind, flow, options, option_yes, option_no, created_at")
           .eq("id", safeId)
           .maybeSingle();
 
-        if (ynRes?.error) {
-          // se è un errore di query reale lo gestiamo sotto; se invece è solo "no rows", maybeSingle ritorna data=null senza error
-          qErr = ynRes.error;
-        } else if (ynRes?.data) {
-          data = { ...ynRes.data, _mode: "yn" };
-        }
+        if (qRes?.error) throw qRes.error;
 
-        // 2) Se non trovata, prova nello schema multi-opzione (listener/pioneer): public.micro_questions_multi
-        if (!data) {
-          const multiRes = await supabase
-            .from("micro_questions_multi")
-            .select("id, question, options, active, created_at")
-            .eq("id", safeId)
-            .maybeSingle();
+        const data = qRes?.data
+          ? {
+              ...qRes.data,
+              // `_mode` guida il rendering: 'multi' (4 opzioni) oppure 'yn' (Sì/No)
+              _mode: String(qRes.data.kind || "").trim().toLowerCase() === "multi" ? "multi" : "yn",
+            }
+          : null;
 
-          if (multiRes?.error) {
-            // se avevamo già un errore sulla prima query, preferiamo quello più utile
-            throw qErr || multiRes.error;
-          }
-
-          if (multiRes?.data) {
-            data = { ...multiRes.data, _mode: "multi" };
-          }
-        }
-
-        // Se non c'è in nessuna tabella
+        // Se non c'è nella tabella
         if (!data) {
           throw new Error("Domanda non trovata (ID non valido o non più disponibile).");
         }
@@ -177,6 +159,12 @@ export default function VotePage() {
           format: "json",
         });
 
+        // ✅ Allinea sempre flow/mode ai dati della domanda (se disponibili)
+        const qFlow = String(question?.flow || "").trim().toLowerCase();
+        const qKind = String(question?._mode || question?.kind || "").trim().toLowerCase();
+        if (qFlow) qs.set("flow", qFlow);
+        if (qKind) qs.set("mode", qKind === "multi" ? "multi" : "yn");
+
         const res = await fetch(`/.netlify/functions/micro-poll-link?${qs.toString()}`, {
           headers: { Accept: "application/json" },
         });
@@ -202,7 +190,7 @@ export default function VotePage() {
     return () => {
       isMounted = false;
     };
-  }, [tokenFromUrl, emailFromUrl, safeId, token]);
+  }, [tokenFromUrl, emailFromUrl, safeId, token, question]);
 
   // 3) Se arriva ?c=1/2, pre-seleziona e mostra conferma
   useEffect(() => {

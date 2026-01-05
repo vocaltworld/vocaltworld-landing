@@ -52,67 +52,125 @@ exports.handler = async function handler(event) {
 
   try {
     if (mode === "questions") {
-      // 1) Speaker (SI/NO) questions
+      // Carichiamo TUTTE le domande da una o due tabelle, ma normalizziamo in modo robusto.
+      // Obiettivo:
+      // - non "forzare" speaker/listener a caso
+      // - riconoscere automaticamente le domande multi-opzione (1..4)
+      // - mantenere compatibilità con le domande SI/NO esistenti
+
+      // 1) Tabella principale (storica)
       const { data: baseData, error: baseErr } = await sbGet(
         `${SUPABASE_URL}/rest/v1/micro_questions?select=*&order=created_at.desc`,
         SERVICE_KEY
       );
       if (baseErr) throw baseErr;
 
-      // 2) Listener (multi-choice) questions
-      // NOTE: table created for 1..4 options
-      const { data: multiData, error: multiErr } = await sbGet(
-        `${SUPABASE_URL}/rest/v1/micro_questions_multi?select=*&order=created_at.desc`,
-        SERVICE_KEY
-      );
-      if (multiErr) throw multiErr;
+      // 2) Tabella opzionale (se esiste ancora). Se NON esiste, non deve rompere tutto.
+      let multiData = [];
+      {
+        const { data, error } = await sbGet(
+          `${SUPABASE_URL}/rest/v1/micro_questions_multi?select=*&order=created_at.desc`,
+          SERVICE_KEY
+        );
+
+        // Se la tabella non esiste (404) o non è accessibile, la ignoriamo.
+        if (!error) multiData = Array.isArray(data) ? data : [];
+      }
 
       const baseQs = Array.isArray(baseData) ? baseData : [];
       const multiQs = Array.isArray(multiData) ? multiData : [];
 
-      // Normalize into a unified shape for the UI.
-      // Keep existing fields to avoid breaking current speaker UI,
-      // but also expose option_1..option_4 for the multi-choice pill/labels.
-      const normalizedBase = baseQs.map((q) => ({
-        ...q,
-        label: q?.question || q?.id,
-        // unified option fields
-        option_1: q?.option_yes ?? "Sì",
-        option_2: q?.option_no ?? "No",
-        option_3: "",
-        option_4: "",
-        campaign_key: q?.campaign_key ?? "speaker",
-        _source: "micro_questions",
-      }));
+      const parseOptions = (q) => {
+        // Priorità: options (array / json) -> option_1..4 -> yes/no
+        // options può essere:
+        // - text[] di Postgres (arr)
+        // - JSON array serializzato (string)
+        let opts = [];
 
-      const normalizedMulti = multiQs.map((q) => {
-        // options may be a Postgres text[] or JSON array
-        const opts = Array.isArray(q?.options)
-          ? q.options
-          : typeof q?.options === "string"
-          ? (() => {
-              try {
-                const parsed = JSON.parse(q.options);
-                return Array.isArray(parsed) ? parsed : [];
-              } catch {
-                return [];
-              }
-            })()
-          : [];
+        if (Array.isArray(q?.options)) {
+          opts = q.options;
+        } else if (typeof q?.options === "string" && q.options.trim()) {
+          try {
+            const parsed = JSON.parse(q.options);
+            if (Array.isArray(parsed)) opts = parsed;
+          } catch {
+            // ignore
+          }
+        }
+
+        const o1 = (q?.option_1 ?? "").toString().trim();
+        const o2 = (q?.option_2 ?? "").toString().trim();
+        const o3 = (q?.option_3 ?? "").toString().trim();
+        const o4 = (q?.option_4 ?? "").toString().trim();
+
+        if (!opts.length && (o1 || o2 || o3 || o4)) {
+          opts = [o1, o2, o3, o4].filter((x) => x && x.trim() !== "");
+        }
+
+        // fallback SI/NO
+        if (!opts.length) {
+          const yes = (q?.option_yes ?? "Sì").toString().trim() || "Sì";
+          const no = (q?.option_no ?? "No").toString().trim() || "No";
+          opts = [yes, no];
+        }
+
+        // garantiamo max 4
+        return opts.slice(0, 4).map((x) => String(x));
+      };
+
+      const inferMode = (opts) => {
+        // se ci sono 3 o 4 opzioni => multi, altrimenti yn
+        return opts.length >= 3 ? "multi" : "yn";
+      };
+
+      const normalizeQuestion = (q, source) => {
+        const opts = parseOptions(q);
+        const mode = inferMode(opts);
+
+        // ⚠️ Qui è il fix del tuo problema:
+        // - NON forziamo "speaker" se è una domanda multi
+        // - se campaign_key/flow è presente lo rispettiamo
+        const campaign = (q?.campaign_key || q?.campaign_label || q?.flow || "").toString().trim();
+        const campaign_key = campaign
+          ? campaign
+          : mode === "multi"
+          ? "listener"
+          : "speaker";
 
         return {
           ...q,
           label: q?.question || q?.id,
-          option_1: opts[0] ?? "Opzione 1",
-          option_2: opts[1] ?? "Opzione 2",
+
+          // campagna/flow
+          campaign_key,
+
+          // modalità UI
+          mode,
+
+          // opzioni normalizzate (sempre disponibili)
+          option_1: opts[0] ?? "",
+          option_2: opts[1] ?? "",
           option_3: opts[2] ?? "",
           option_4: opts[3] ?? "",
-          campaign_key: q?.campaign_key ?? "listener",
-          _source: "micro_questions_multi",
-        };
-      });
 
-      const questions = [...normalizedBase, ...normalizedMulti];
+          _source: source,
+        };
+      };
+
+      // Normalizziamo entrambe le fonti
+      const normalizedBase = baseQs.map((q) => normalizeQuestion(q, "micro_questions"));
+      const normalizedMulti = multiQs.map((q) => normalizeQuestion(q, "micro_questions_multi"));
+
+      // Unione (evita duplicati per id se la stessa domanda fosse in due tabelle)
+      const seen = new Set();
+      const questions = [];
+      for (const q of [...normalizedBase, ...normalizedMulti]) {
+        const id = String(q?.id || "");
+        if (!id) continue;
+        if (seen.has(id)) continue;
+        seen.add(id);
+        questions.push(q);
+      }
 
       return json(200, { ok: true, questions }, origin);
     }
@@ -121,7 +179,7 @@ exports.handler = async function handler(event) {
       if (!questionId) return json(400, { ok: false, error: "missing_question_id" }, origin);
 
       const { data: rows, error: rErr } = await sbGet(
-        `${SUPABASE_URL}/rest/v1/micro_poll_responses?select=created_at,choice,email,voter_hash,question_id&question_id=eq.${encodeURIComponent(
+        `${SUPABASE_URL}/rest/v1/micro_poll_responses?select=created_at,choice,email,voter_hash,question_id,flow,token_id&question_id=eq.${encodeURIComponent(
           questionId
         )}&order=created_at.desc&limit=500`,
         SERVICE_KEY

@@ -332,6 +332,45 @@ function microRowKey(r) {
     // BOM UTF-8 per Excel
     return "\uFEFF" + lines.join("\n");
   }
+  // ---------------------------
+// Micro-polls helpers (flow + labels)
+// ---------------------------
+function inferMicroFlowFromQuestion(q) {
+  const flow = String(q?.flow || "").trim().toLowerCase();
+  if (flow === "speaker" || flow === "listener" || flow === "pioneer") return flow;
+
+  // fallback: se ha option_3/option_4 è un multi-option => listener
+  const o3 = String(q?.option_3 ?? "").trim();
+  const o4 = String(q?.option_4 ?? "").trim();
+  if (o3 || o4) return "listener";
+
+  return "speaker";
+}
+
+function getMicroQuestionLabel(q) {
+  const flow = inferMicroFlowFromQuestion(q);
+  const questionText = String(q?.question || "").trim();
+  const shortId = String(q?.id || "").slice(0, 6);
+  return `${flow} — ${questionText || "Domanda"} (${shortId || "id"})`;
+}
+
+function getMicroQuestionOptions(q) {
+  const o1 = String(q?.option_1 ?? q?.option_yes ?? "Sì");
+  const o2 = String(q?.option_2 ?? q?.option_no ?? "No");
+  const o3 = String(q?.option_3 ?? "");
+  const o4 = String(q?.option_4 ?? "");
+  return { o1, o2, o3, o4, isFour: !!String(o3).trim() || !!String(o4).trim() };
+}
+
+function microChoiceToLabel(choice, q) {
+  const c = normalizeMicroChoice(choice);
+  const { o1, o2, o3, o4 } = getMicroQuestionOptions(q);
+  if (c === "1") return o1 || "Opzione 1";
+  if (c === "2") return o2 || "Opzione 2";
+  if (c === "3") return (o3 && o3.trim()) ? o3 : "Opzione 3";
+  if (c === "4") return (o4 && o4.trim()) ? o4 : "Opzione 4";
+  return "-";
+}
 
   function downloadTextFile(filename, content, mime = "text/csv;charset=utf-8") {
     const blob = new Blob([content], { type: mime });
@@ -391,36 +430,54 @@ function microRowKey(r) {
     return rowsToCsv(rows, { delimiter: ";" });
   }
 
-  function buildMicroPollCsv({ question, rows, stats }) {
-    const qLabel = (question?.campaign_label || question?.campaign_key || "Micro-poll").toString();
-    const qText = (question?.question || "").toString();
+ function buildMicroPollCsv({ question, rows, stats }) {
+  const qLabel = getMicroQuestionLabel(question);
+  const qText = String(question?.question || "");
+  const qid = String(question?.id || "");
 
-    const meta = [
-      ["--- MICRO-POLL ---"],
-      ["campagna", qLabel],
-      ["domanda", qText],
-      ["question_id", String(question?.id || "")],
-      [""],
-      ["totale_voti", stats?.total ?? ""],
-      ["si", stats?.yes ?? ""],
-      ["si_percent", stats?.pctYes ?? ""],
-      ["no", stats?.no ?? ""],
-      ["no_percent", stats?.pctNo ?? ""],
-      [""],
-    ];
+  // Stats: compatibile sia con vecchio (yes/no) sia nuovo (c1..c4)
+  const total = stats?.total ?? 0;
+  const c1 = stats?.c1 ?? stats?.count1 ?? stats?.yes ?? 0;
+  const c2 = stats?.c2 ?? stats?.count2 ?? stats?.no ?? 0;
+  const c3 = stats?.c3 ?? stats?.count3 ?? 0;
+  const c4 = stats?.c4 ?? stats?.count4 ?? 0;
 
-    const header = ["email", "data", "scelta"];
-    const body = (rows || []).map((r) => {
-      const c = normalizeMicroChoice(r.choice);
-      return [
-        displayEmail(r.email),
-        formatDate(r.created_at || r.createdAt),
-        c === "1" ? "SI" : c === "2" ? "NO" : "",
-      ];
-    });
+  const p1 = stats?.pct1 ?? stats?.pctYes ?? 0;
+  const p2 = stats?.pct2 ?? stats?.pctNo ?? 0;
+  const p3 = stats?.pct3 ?? 0;
+  const p4 = stats?.pct4 ?? 0;
 
-    return rowsToCsv([...meta, header, ...body], { delimiter: ";" });
+  const { o1, o2, o3, o4, isFour } = getMicroQuestionOptions(question);
+
+  const meta = [
+    ["--- MICRO-POLL ---"],
+    ["label", qLabel],
+    ["domanda", qText],
+    ["question_id", qid],
+    [""],
+    ["totale_voti", total],
+    ["1", `${o1 || "Opzione 1"} | ${c1} | ${p1}%`],
+    ["2", `${o2 || "Opzione 2"} | ${c2} | ${p2}%`],
+  ];
+
+  if (isFour) {
+    meta.push(["3", `${(o3 || "Opzione 3")} | ${c3} | ${p3}%`]);
+    meta.push(["4", `${(o4 || "Opzione 4")} | ${c4} | ${p4}%`]);
   }
+
+  meta.push([""]);
+
+  const header = ["email", "data", "scelta"];
+  const body = (rows || []).map((r) => {
+    return [
+      displayEmail(r.email),
+      formatDate(r.created_at || r.createdAt),
+      microChoiceToLabel(r.choice, question),
+    ];
+  });
+
+  return rowsToCsv([...meta, header, ...body], { delimiter: ";" });
+}
 
   async function doExport() {
     try {
@@ -511,12 +568,10 @@ function microRowKey(r) {
   }
   const renderMicroSection = () => {
     const selectedQ = microQuestions.find((q) => String(q?.id || "") === String(microSelectedId || ""));
-    const selectedBase = (selectedQ?.campaign_label || selectedQ?.campaign_key || "Micro-poll").toString();
+   const selectedBase = inferMicroFlowFromQuestion(selectedQ);
     const selectedQuestionText = (selectedQ?.question || "").toString().trim();
     const selectedShortId = String(selectedQ?.id || "").slice(0, 6);
-    const selectedFullLabel = selectedQ
-      ? `${selectedBase} — ${selectedQuestionText || "Domanda"} (${selectedShortId || "id"})`
-      : "";
+   const selectedFullLabel = selectedQ ? getMicroQuestionLabel(selectedQ) : "";
           // Opzioni dinamiche: supporta Speaker (option_yes/option_no) e Listener (option_1..option_4)
     const opt1 = (selectedQ?.option_1 ?? selectedQ?.option_yes ?? "Sì").toString();
     const opt2 = (selectedQ?.option_2 ?? selectedQ?.option_no ?? "No").toString();
@@ -597,10 +652,7 @@ function microRowKey(r) {
               >
                 <option value="">-- scegli --</option>
                 {microQuestions.map((q) => {
-                  const base = (q.campaign_label || q.campaign_key || "Micro-poll").toString();
-                  const questionText = (q.question || "").toString().trim();
-                  const shortId = String(q.id || "").slice(0, 6);
-                  const label = `${base} — ${questionText || "Domanda"} (${shortId || "id"})`;
+                 const label = getMicroQuestionLabel(q);
                   return (
                     <option key={q.id} value={q.id}>
                       {label}

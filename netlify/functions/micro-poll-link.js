@@ -1,4 +1,3 @@
-
 const crypto = require("crypto");
 
 // Node 18+ has global fetch. We use it to read the micro-question from Supabase.
@@ -38,37 +37,40 @@ async function supabaseGet(path) {
 }
 
 async function loadMicroQuestion(questionId) {
-  // Preferred: multi-choice table
-  try {
-    const rows = await supabaseGet(
-      `/rest/v1/micro_questions_multi?select=id,question,options,active,created_at&id=eq.${encodeURIComponent(
-        questionId
-      )}&limit=1`
-    );
-    if (Array.isArray(rows) && rows.length) {
-      return { mode: "multi", row: rows[0] };
-    }
-  } catch (_) {
-    // ignore and try legacy
-  }
-
-  // Legacy: yes/no table
-  const rows2 = await supabaseGet(
-    `/rest/v1/micro_questions?select=id,question,option_yes,option_no,active,created_at&id=eq.${encodeURIComponent(
+  // ✅ UNIFICATO: una sola tabella `public.micro_questions`
+  // Colonne attese (minime): id, question, kind ('yn'|'multi'), options (json/array), option_yes, option_no, flow, active, created_at
+  const rows = await supabaseGet(
+    `/rest/v1/micro_questions?select=id,question,kind,options,option_yes,option_no,flow,active,created_at&id=eq.${encodeURIComponent(
       questionId
     )}&limit=1`
   );
-  // Defensive: legacy table must have option_yes/option_no (not option_1..4)
-  if (Array.isArray(rows2) && rows2.length) {
-    const r = rows2[0];
-    if (r && (r.option_yes === undefined || r.option_no === undefined)) {
-      throw new Error("Legacy micro_questions schema mismatch: expected option_yes/option_no");
+
+  if (!Array.isArray(rows) || !rows.length) return null;
+
+  const row = rows[0] || {};
+  const kind = String(row.kind || "").trim().toLowerCase();
+
+  // Determiniamo la modalità in modo robusto:
+  // - se kind è 'multi' -> multi
+  // - altrimenti se options è un array con >=2 elementi -> multi
+  // - fallback -> yn
+  const hasOptionsArray = Array.isArray(row.options) && row.options.length >= 2;
+  const mode = kind === "multi" || hasOptionsArray ? "multi" : "yn";
+
+  // Validazioni minime per evitare mismatch silenziosi
+  if (mode === "yn") {
+    // Deve avere option_yes e option_no
+    if (row.option_yes === undefined || row.option_no === undefined) {
+      throw new Error("micro_questions schema mismatch: expected option_yes/option_no for kind=yn");
+    }
+  } else {
+    // Deve avere options array
+    if (!hasOptionsArray) {
+      throw new Error("micro_questions schema mismatch: expected options[] for kind=multi");
     }
   }
-  if (!Array.isArray(rows2) || !rows2.length) {
-    return null;
-  }
-  return { mode: "yn", row: rows2[0] };
+
+  return { mode, row };
 }
 
 function json(statusCode, body, extraHeaders = {}) {
@@ -131,7 +133,12 @@ function normalizeFlow(v) {
   if (s === "listener" || s === "pioneer" || s === "speaker") return s;
   return "speaker";
 }
-
+// Come normalizeFlow(), ma se non c’è flow valido ritorna "" (NON forza speaker)
+function normalizeFlowOptional(v) {
+  const s = String(v || "").trim().toLowerCase();
+  if (s === "listener" || s === "pioneer" || s === "speaker") return s;
+  return "";
+}
 function corsHeaders(origin) {
   // In produzione lascia passare solo i tuoi domini (e localhost per dev)
   const allowlist = new Set([
@@ -258,22 +265,32 @@ exports.handler = async (event) => {
     if (q.row.active === false) {
       return json(400, { ok: false, error: "Question is not active", question_id: questionId }, corsHeaders(origin));
     }
+    // ✅ Flow e mode devono seguire la domanda (evita mix Speaker/Listener)
+// NB: se la domanda non ha `flow` valido in DB, NON forziamo 'speaker' automaticamente.
+const dbFlow = normalizeFlowOptional(q.row.flow || "");
+const effectiveFlow = dbFlow ? dbFlow : flow;
+const effectiveMode = String(q.mode || "yn").trim().toLowerCase();
+
     // Scadenza token: 7 giorni (manteniamo ms per compatibilità con la logica lato vote)
     const exp = Date.now() + 7 * 24 * 60 * 60 * 1000;
 
     // Token id unico (serve per bloccare doppi voti sullo stesso link)
     const token_id = crypto.randomBytes(16).toString("hex");
 
-    // JWT payload: email (e) + questionId (q) + expiry (exp) + token id (t)
+    // JWT payload: email (e) + questionId (q) + expiry (exp) + token id (t) + flow (f) + mode (m)
     const headerB64 = base64url(JSON.stringify({ alg: "HS256", typ: "JWT" }));
-    const payloadB64 = base64url(JSON.stringify({ e: email, q: questionId, exp, t: token_id, f: flow }));
+    const payloadB64 = base64url(
+      JSON.stringify({ e: email, q: questionId, exp, t: token_id, f: effectiveFlow, m: effectiveMode })
+    );
 
     const signingInput = `${headerB64}.${payloadB64}`;
     const sigB64 = signJwt(MICRO_POLL_SECRET, signingInput);
     const token = `${signingInput}.${sigB64}`;
 
     // URL completo della pagina voto (usato solo per redirect)
-    const url = `${redirectBase}/poll/${encodeURIComponent(questionId)}?token=${encodeURIComponent(token)}&flow=${encodeURIComponent(flow)}`;
+    const url = `${redirectBase}/micro?token=${encodeURIComponent(token)}&flow=${encodeURIComponent(
+      effectiveFlow
+    )}&mode=${encodeURIComponent(effectiveMode)}`;
 
     const headers = corsHeaders(origin);
 
@@ -299,7 +316,7 @@ exports.handler = async (event) => {
         token,
         exp,
         token_id,
-        flow,
+        flow: effectiveFlow,
         question_id: questionId,
         mode: q.mode,
         question: questionText,
