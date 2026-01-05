@@ -195,33 +195,80 @@ exports.handler = async (event) => {
       return json(400, { ok: false, error: "question_mismatch" }, cors);
     }
 
-    const endpoint = `${SUPABASE_URL}/rest/v1/${SUPABASE_TABLE}`;
+    const baseEndpoint = `${SUPABASE_URL}/rest/v1/${SUPABASE_TABLE}`;
 
-    const insertRes = await fetch(endpoint, {
+    // 1) Pre-check: if a vote already exists for this (question_id, voter_hash) return early.
+    // This prevents false "already_voted" when a 409 happens for a DIFFERENT constraint.
+    const checkUrl = `${baseEndpoint}?select=id,choice,created_at&question_id=eq.${encodeURIComponent(
+      question_id
+    )}&voter_hash=eq.${encodeURIComponent(voter_hash)}&limit=1`;
+
+    const preCheckRes = await fetch(checkUrl, {
+      method: "GET",
+      headers: {
+        apikey: SERVICE_KEY,
+        Authorization: `Bearer ${SERVICE_KEY}`,
+        Accept: "application/json",
+      },
+    });
+
+    const preCheckData = await preCheckRes.json().catch(() => null);
+
+    if (preCheckRes.ok && Array.isArray(preCheckData) && preCheckData.length > 0) {
+      return json(200, { ok: true, already_voted: true, flow }, cors);
+    }
+
+    // 2) Try insert
+    const insertRes = await fetch(baseEndpoint, {
       method: "POST",
       headers: {
         apikey: SERVICE_KEY,
         Authorization: `Bearer ${SERVICE_KEY}`,
         "Content-Type": "application/json",
-        // We WANT a 409 on duplicate (unique index on question_id + voter_hash).
-        // `choice` is stored as a string: "1".."4" (legacy yes/no are normalized to 1/2).
+        Accept: "application/json",
         Prefer: "return=representation",
       },
       body: JSON.stringify({ question_id, choice, token_id, voter_hash, email, flow }),
     });
 
     const insertData = await insertRes.json().catch(() => null);
+
     console.log("INSERT STATUS:", insertRes.status);
-console.log("INSERT DATA:", insertData);
-console.log("PAYLOAD:", { question_id, choice, email, voter_hash, flow });
+    console.log("INSERT DATA:", insertData);
+    console.log("PAYLOAD:", { question_id, choice, email, voter_hash, flow, token_id });
 
     if (!insertRes.ok) {
-      // With unique index (question_id, voter_hash) a double vote should be 409,
-      // or Postgres unique violation code 23505 in the response payload.
       const pgCode = insertData && insertData.code;
 
+      // 3) If it's a unique violation, confirm it's REALLY the (question_id,voter_hash) case.
       if (insertRes.status === 409 || pgCode === "23505") {
-        return json(200, { ok: true, already_voted: true, flow }, cors);
+        const postCheckRes = await fetch(checkUrl, {
+          method: "GET",
+          headers: {
+            apikey: SERVICE_KEY,
+            Authorization: `Bearer ${SERVICE_KEY}`,
+            Accept: "application/json",
+          },
+        });
+
+        const postCheckData = await postCheckRes.json().catch(() => null);
+
+        if (postCheckRes.ok && Array.isArray(postCheckData) && postCheckData.length > 0) {
+          return json(200, { ok: true, already_voted: true, flow }, cors);
+        }
+
+        // If we got a 409 but there is NO existing vote for (question_id,voter_hash),
+        // then the conflict is coming from a different DB constraint (e.g. token_id unique).
+        return json(
+          409,
+          {
+            ok: false,
+            error: "supabase_conflict_other_constraint",
+            status: insertRes.status,
+            data: insertData,
+          },
+          cors
+        );
       }
 
       return json(
