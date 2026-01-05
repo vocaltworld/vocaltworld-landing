@@ -76,30 +76,38 @@ export default function MicroPoll() {
 
   const flow = useMemo(() => {
     // Priorità: querystring -> token payload -> ""
+    let f = "";
     try {
       const u = new URL(url);
-      const f = String(u.searchParams.get("flow") || "")
-        .trim()
-        .toLowerCase();
-      if (f) return f;
+      f = String(u.searchParams.get("flow") || "").trim().toLowerCase();
     } catch {
       // ignore
     }
 
-    const f2 = String(tokenPayload?.f || tokenPayload?.flow || "")
-      .trim()
-      .toLowerCase();
-    return f2;
+    if (!f) {
+      f = String(tokenPayload?.f || tokenPayload?.flow || "")
+        .trim()
+        .toLowerCase();
+    }
+
+    // normalizza solo ai valori ammessi
+    if (["speaker", "listener", "pioneer"].includes(f)) return f;
+    return "";
   }, [url, tokenPayload]);
 
   const mode = useMemo(() => {
-    // Priorità: querystring -> token payload -> flow -> default
+    // 1) Se il flow è chiaro, lo usiamo come sorgente primaria per evitare "mischioni"
+    const f = String(flow || "").trim().toLowerCase();
+    if (f === "listener") return "multi";
+    if (f === "speaker" || f === "pioneer") return "yn";
+
+    // 2) Fallback: querystring -> token payload -> default
     try {
       const u = new URL(url);
       const m = String(u.searchParams.get("mode") || u.searchParams.get("m") || "")
         .trim()
         .toLowerCase();
-      if (m) return m;
+      if (m === "multi" || m === "yn") return m;
     } catch {
       // ignore
     }
@@ -107,13 +115,9 @@ export default function MicroPoll() {
     const m2 = String(tokenPayload?.m || tokenPayload?.mode || "")
       .trim()
       .toLowerCase();
-    if (m2) return m2;
+    if (m2 === "multi" || m2 === "yn") return m2;
 
-    // Deduciamo dal flow (URL o token)
-    const f = String(flow || "").trim().toLowerCase();
-    if (f === "listener") return "multi";
-
-    return "yn"; // default: Speaker (Sì/No)
+    return "yn";
   }, [url, tokenPayload, flow]);
 
   // Domanda + opzioni (fallback safe: non rompe nulla se non arrivano dati extra)
@@ -196,7 +200,13 @@ export default function MicroPoll() {
       const res = await fetch("/.netlify/functions/micro-poll-vote", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ token: effectiveToken, choice, flow }),
+        body: JSON.stringify({
+          token: effectiveToken,
+          choice,
+          flow,
+          // inviamo anche question_id così il backend può bloccare mismatch tra token e pagina
+          question_id: questionId,
+        }),
       });
 
       const data = await res.json().catch(() => ({}));
@@ -236,10 +246,20 @@ export default function MicroPoll() {
       const qs = new URLSearchParams();
       qs.set("question_id", qid);
       qs.set("email", email);
-      // Se è listener e non è stato passato mode, forziamo multi per coerenza UI
-      if (flowParam && !modeParam) qs.set("mode", flowParam === "listener" ? "multi" : "yn");
-      if (flowParam) qs.set("flow", flowParam);
-      if (modeParam) qs.set("mode", modeParam);
+
+      const normalizedFlow = ["speaker", "listener", "pioneer"].includes(flowParam.toLowerCase())
+        ? flowParam.toLowerCase()
+        : "";
+
+      if (normalizedFlow) qs.set("flow", normalizedFlow);
+
+      // Se non è stato passato mode, lo deduciamo dal flow (listener => multi, altrimenti yn)
+      const normalizedMode = String(modeParam || "").trim().toLowerCase();
+      if (normalizedMode) {
+        qs.set("mode", normalizedMode);
+      } else if (normalizedFlow) {
+        qs.set("mode", normalizedFlow === "listener" ? "multi" : "yn");
+      }
 
       try {
         // Proviamo prima una risposta JSON (se la function la supporta).
