@@ -246,18 +246,109 @@ exports.handler = async (event) => {
         qs.redirectBase ||
         "https://survey.vocaltworld.com"
     );
-    // ✅ Shortcut: se arriva già un token, facciamo solo redirect/JSON senza richiedere question_id/email
-const tokenFromQs = String(qs.token || payload.token || "").trim();
-if (tokenFromQs) {
-  const url = `${redirectBase}/micro?token=${encodeURIComponent(tokenFromQs)}`;
-  const headers = corsHeaders(origin);
-  const format = String(qs.format || "").toLowerCase();
+      // ✅ Shortcut: se arriva già un token, possiamo:
+    // - redirect verso /micro?token=...
+    // - oppure (format=json) restituire anche question/mode/options leggendo da Supabase
+    const tokenFromQs = String(qs.token || payload.token || "").trim();
 
-  if (event.httpMethod === "GET" && format !== "json") {
-    return redirect(302, url, headers);
-  }
-  return json(200, { ok: true, token: tokenFromQs, redirect: url }, headers);
-}
+    function safeEqual(a, b) {
+      const sa = String(a);
+      const sb = String(b);
+      if (sa.length !== sb.length) return false;
+      return crypto.timingSafeEqual(Buffer.from(sa), Buffer.from(sb));
+    }
+
+    function base64urlToJson(b64url) {
+      try {
+        return JSON.parse(base64urlToString(b64url));
+      } catch {
+        return null;
+      }
+    }
+
+    function verifyJwtHS256(secret, token) {
+      const parts = String(token || "").split(".");
+      if (parts.length !== 3) return { ok: false, error: "invalid_token_format" };
+
+      const [h, p, s] = parts;
+      if (!h || !p || !s) return { ok: false, error: "invalid_token_format" };
+
+      const signingInput = `${h}.${p}`;
+      const expected = signJwt(secret, signingInput);
+
+      if (!safeEqual(s, expected)) return { ok: false, error: "invalid_token" };
+
+      const decoded = base64urlToJson(p);
+      if (!decoded) return { ok: false, error: "invalid_token_payload" };
+
+      return { ok: true, decoded };
+    }
+
+    if (tokenFromQs) {
+      const headers = corsHeaders(origin);
+      const format = String(qs.format || "").toLowerCase();
+
+      // Redirect classico (click da email)
+      const url = `${redirectBase}/micro?token=${encodeURIComponent(tokenFromQs)}`;
+      if (event.httpMethod === "GET" && format !== "json") {
+        return redirect(302, url, headers);
+      }
+
+      // format=json: arricchiamo con domanda/opzioni (così il frontend non mostra placeholder)
+      const v = verifyJwtHS256(MICRO_POLL_SECRET, tokenFromQs);
+      if (!v.ok) return json(401, { ok: false, error: v.error }, headers);
+
+      const questionIdFromToken = String(v.decoded?.q || "").trim();
+      const expFromToken = Number(v.decoded?.exp || 0);
+      const tokenIdFromToken = String(v.decoded?.t || v.decoded?.tid || "").trim();
+      const flowFromToken = normalizeFlowOptional(v.decoded?.f || v.decoded?.flow || "");
+      const modeFromToken = String(v.decoded?.m || v.decoded?.mode || "").trim().toLowerCase();
+
+      if (!questionIdFromToken) {
+        return json(400, { ok: false, error: "token_missing_fields" }, headers);
+      }
+      if (expFromToken && Date.now() > expFromToken) {
+        return json(401, { ok: false, error: "token_expired" }, headers);
+      }
+
+      const q = await loadMicroQuestion(questionIdFromToken);
+      if (!q || !q.row) {
+        return json(404, { ok: false, error: "Question not found", question_id: questionIdFromToken }, headers);
+      }
+      if (q.row.active === false) {
+        return json(400, { ok: false, error: "Question is not active", question_id: questionIdFromToken }, headers);
+      }
+
+      // ✅ Flow e mode devono seguire la domanda (evita mix Speaker/Listener)
+      const dbFlow = normalizeFlowOptional(q.row.flow || "");
+      const effectiveFlow = dbFlow || flowFromToken || "speaker";
+      const effectiveMode = String(q.mode || modeFromToken || "yn").trim().toLowerCase();
+
+      const questionText = String(q.row.question || "");
+      const options =
+        effectiveMode === "multi"
+          ? Array.isArray(q.row.options)
+            ? q.row.options
+            : []
+          : ["Sì", "No"];
+
+      return json(
+        200,
+        {
+          ok: true,
+          token: tokenFromQs,
+          redirect: url,
+          exp: expFromToken || undefined,
+          token_id: tokenIdFromToken || undefined,
+          flow: effectiveFlow,
+          question_id: questionIdFromToken,
+          mode: effectiveMode,
+          question: questionText,
+          options,
+        },
+        headers
+      );
+    }
 
     if (!questionId) return json(400, { ok: false, error: "Missing question_id" }, corsHeaders(origin));
     if (!email) return json(400, { ok: false, error: "Missing/invalid email" }, corsHeaders(origin));

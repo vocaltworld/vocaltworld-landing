@@ -3,10 +3,12 @@ import React, { useEffect, useMemo, useState } from "react";
 export default function MicroPoll() {
   const [status, setStatus] = useState("idle"); // idle | saving | saved | already | error
   const [err, setErr] = useState("");
+
   // Supporto link /micro?question_id=...&email=... (senza token in URL)
   const [tokenOverride, setTokenOverride] = useState("");
 
   const url = typeof window !== "undefined" ? window.location.href : "";
+
   const tokenFromUrl = useMemo(() => {
     try {
       const u = new URL(url);
@@ -16,31 +18,7 @@ export default function MicroPoll() {
     }
   }, [url]);
 
-  const effectiveToken = tokenOverride || tokenFromUrl;
-
-  // ⚙️ Fallback hardening: if links/redirects lose flow/mode, infer from known question ids.
-  // This prevents showing Sì/No for listener multi-option questions.
-  const MULTI_QUESTION_IDS = new Set([
-    "bce70204-ab86-4e90-8f0f-53e08b77edd3", // listener (multi)
-  ]);
-
-  const questionId = useMemo(() => {
-    // Supporta:
-    // - /poll/<id>
-    // - /micro?question_id=<uuid>
-    try {
-      const u = new URL(url);
-
-      const qid = u.searchParams.get("question_id") || u.searchParams.get("qid") || "";
-      if (qid) return qid;
-
-      const parts = u.pathname.split("/").filter(Boolean);
-      const idx = parts.indexOf("poll");
-      return idx >= 0 ? (parts[idx + 1] || "") : "";
-    } catch {
-      return "";
-    }
-  }, [url]);
+  const effectiveToken = (tokenOverride || tokenFromUrl || "").trim();
 
   function base64urlToString(b64url) {
     const b64 = String(b64url || "").replace(/-/g, "+").replace(/_/g, "/");
@@ -60,28 +38,52 @@ export default function MicroPoll() {
     }
   }
 
+  // Decodifica payload token (supporta JWT e legacy)
   const tokenPayload = useMemo(() => {
-    const raw = (tokenOverride || tokenFromUrl || "").trim();
+    const raw = String(effectiveToken || "").trim();
     if (!raw) return null;
 
     const parts = raw.split(".");
-
-    // Token formats supported:
-    // - JWT: header.payload.signature
-    // - Legacy: data.signature
+    // JWT: header.payload.signature
+    // Legacy: data.signature
     let payloadB64 = "";
     if (parts.length === 3) payloadB64 = parts[1];
     else if (parts.length === 2) payloadB64 = parts[0];
     else return null;
 
     if (!payloadB64) return null;
-
     const txt = base64urlToString(payloadB64);
     return safeJsonParse(txt);
-  }, [tokenFromUrl, tokenOverride]);
+  }, [effectiveToken]);
+
+  // ⚙️ If redirects lose flow/mode, infer from known question ids.
+  const MULTI_QUESTION_IDS = new Set([
+    "bce70204-ab86-4e90-8f0f-53e08b77edd3", // listener (multi)
+  ]);
+
+  const questionId = useMemo(() => {
+    try {
+      const u = new URL(url);
+
+      // /micro?question_id=<uuid> | /micro?qid=<uuid>
+      const qid = u.searchParams.get("question_id") || u.searchParams.get("qid") || "";
+      if (qid) return qid;
+
+      // Se abbiamo solo ?token=..., ricaviamo question_id dal payload
+      const tq = String(tokenPayload?.q || tokenPayload?.question_id || "").trim();
+      if (tq) return tq;
+
+      // Legacy route: /poll/<id>
+      const parts = u.pathname.split("/").filter(Boolean);
+      const idx = parts.indexOf("poll");
+      return idx >= 0 ? parts[idx + 1] || "" : "";
+    } catch {
+      return "";
+    }
+  }, [url, tokenPayload]);
 
   const flow = useMemo(() => {
-    // Priorità: querystring -> token payload -> ""
+    // Priorità: querystring -> token payload -> inference -> ""
     let f = "";
     try {
       const u = new URL(url);
@@ -91,26 +93,19 @@ export default function MicroPoll() {
     }
 
     if (!f) {
-      f = String(tokenPayload?.f || tokenPayload?.flow || "")
-        .trim()
-        .toLowerCase();
+      f = String(tokenPayload?.f || tokenPayload?.flow || "").trim().toLowerCase();
     }
 
-    // normalizza solo ai valori ammessi
+    if (!f && questionId && MULTI_QUESTION_IDS.has(String(questionId).trim())) {
+      f = "listener";
+    }
+
     if (["speaker", "listener", "pioneer"].includes(f)) return f;
     return "";
-  }, [url, tokenPayload]);
+  }, [url, tokenPayload, questionId]);
 
   const mode = useMemo(() => {
-    // 0) Strong inference by question id (if flow/mode are missing due to redirect/link issues)
-    if (questionId && MULTI_QUESTION_IDS.has(String(questionId).trim())) return "multi";
-
-    // 1) If flow is clear, use it as primary source
-    const f = String(flow || "").trim().toLowerCase();
-    if (f === "listener") return "multi";
-    if (f === "speaker" || f === "pioneer") return "yn";
-
-    // 2) Fallback: querystring -> token payload -> default
+    // 1) querystring
     try {
       const u = new URL(url);
       const m = String(u.searchParams.get("mode") || u.searchParams.get("m") || "")
@@ -121,33 +116,28 @@ export default function MicroPoll() {
       // ignore
     }
 
-    // token payload hint
-    const m2 = String(tokenPayload?.m || tokenPayload?.mode || "")
-      .trim()
-      .toLowerCase();
+    // 2) token payload
+    const m2 = String(tokenPayload?.m || tokenPayload?.mode || "").trim().toLowerCase();
     if (m2 === "multi" || m2 === "yn") return m2;
 
-    // last-resort: infer from token payload flow
-    const f2 = String(tokenPayload?.f || tokenPayload?.flow || "")
-      .trim()
-      .toLowerCase();
-    if (f2 === "listener") return "multi";
-    if (f2 === "speaker" || f2 === "pioneer") return "yn";
+    // 3) inference by questionId / flow
+    if (questionId && MULTI_QUESTION_IDS.has(String(questionId).trim())) return "multi";
+    if (flow === "listener") return "multi";
+    if (flow === "speaker" || flow === "pioneer") return "yn";
 
     return "yn";
-  }, [url, tokenPayload, flow, questionId]);
+  }, [url, tokenPayload, questionId, flow]);
 
-  // Domanda + opzioni (fallback safe: non rompe nulla se non arrivano dati extra)
-  const [questionText, setQuestionText] = useState(
-    "Quale direzione ti convince di più per il futuro di Vocal T World?"
-  );
+  // Domanda + opzioni (fallback safe)
+  const DEFAULT_QUESTION = "Quale direzione ti convince di più per il futuro di Vocal T World?";
 
+  const [questionText, setQuestionText] = useState(DEFAULT_QUESTION);
   const [options, setOptions] = useState(() => ({
     yn: { yes: "Sì", no: "No" },
     multi: ["Opzione 1", "Opzione 2", "Opzione 3", "Opzione 4"],
   }));
 
-  // Proviamo a leggere domanda/opzioni da querystring (comodo per debug) o dal token payload
+  // Legge eventuali override da querystring o token payload
   useEffect(() => {
     try {
       const u = new URL(url);
@@ -156,8 +146,8 @@ export default function MicroPoll() {
       if (q) setQuestionText(q);
 
       // Y/N labels
-      const yesLabel = u.searchParams.get("yes") || u.searchParams.get("option_yes") || u.searchParams.get("o1");
-      const noLabel = u.searchParams.get("no") || u.searchParams.get("option_no") || u.searchParams.get("o2");
+      const yesLabel = u.searchParams.get("yes") || u.searchParams.get("option_yes") || "";
+      const noLabel = u.searchParams.get("no") || u.searchParams.get("option_no") || "";
 
       // MULTI labels
       const m1 = u.searchParams.get("o1") || u.searchParams.get("opt1") || u.searchParams.get("a");
@@ -165,11 +155,13 @@ export default function MicroPoll() {
       const m3 = u.searchParams.get("o3") || u.searchParams.get("opt3") || u.searchParams.get("c");
       const m4 = u.searchParams.get("o4") || u.searchParams.get("opt4") || u.searchParams.get("d");
 
-      // Token payload (se in futuro lo aggiungiamo lato link generator)
+      // Token payload hints
       const pQ = tokenPayload?.qt || tokenPayload?.question_text || tokenPayload?.question;
       const pYes = tokenPayload?.yes || tokenPayload?.option_yes;
       const pNo = tokenPayload?.no || tokenPayload?.option_no;
       const pMulti = Array.isArray(tokenPayload?.options) ? tokenPayload.options : null;
+
+      if (pQ) setQuestionText(String(pQ));
 
       setOptions((prev) => {
         const next = { ...prev };
@@ -181,65 +173,30 @@ export default function MicroPoll() {
           };
         }
 
-        const multiFromUrl = [m1, m2, m3, m4].filter((x) => x != null && String(x).trim() !== "");
         if (pMulti && pMulti.length >= 2) {
           next.multi = pMulti.map((x) => String(x));
-        } else if (multiFromUrl.length >= 2) {
-          // se l’utente passa almeno 2 opzioni, riempiamo le restanti con fallback
-          const filled = [m1 || prev.multi?.[0] || "Opzione 1", m2 || prev.multi?.[1] || "Opzione 2", m3 || prev.multi?.[2] || "Opzione 3", m4 || prev.multi?.[3] || "Opzione 4"];
-          next.multi = filled.map((x) => String(x));
+        } else {
+          const multiFromUrl = [m1, m2, m3, m4].filter((x) => x != null && String(x).trim() !== "");
+          if (multiFromUrl.length >= 2) {
+            const filled = [
+              m1 || prev.multi?.[0] || "Opzione 1",
+              m2 || prev.multi?.[1] || "Opzione 2",
+              m3 || prev.multi?.[2] || "Opzione 3",
+              m4 || prev.multi?.[3] || "Opzione 4",
+            ];
+            next.multi = filled.map((x) => String(x));
+          }
         }
 
         return next;
       });
-
-      if (pQ) setQuestionText(String(pQ));
     } catch {
       // ignore
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [url, tokenPayload]);
 
-  const submitVote = async (choice) => {
-    if (!effectiveToken) {
-      setStatus("error");
-      setErr("Token mancante. Apri il link dall’email.");
-      return;
-    }
-
-    const ok = window.confirm("Sei sicuro della tua risposta? Non potrai cambiarla.");
-    if (!ok) return;
-
-    try {
-      setStatus("saving");
-      setErr("");
-
-      const res = await fetch("/.netlify/functions/micro-poll-vote", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          token: effectiveToken,
-          choice,
-          flow,
-          mode,
-          // inviamo anche question_id così il backend può bloccare mismatch tra token e pagina
-          question_id: questionId,
-        }),
-      });
-
-      const data = await res.json().catch(() => ({}));
-
-      if (!res.ok) throw new Error(data?.error || "Errore salvataggio");
-
-      if (data.already_voted) setStatus("already");
-      else setStatus("saved");
-    } catch (e) {
-      setStatus("error");
-      setErr(e?.message || "Errore inatteso");
-    }
-  };
-  // Se arrivi da un link "pulito" senza token (es: /micro?question_id=...&email=...),
-  // chiediamo alla function di generarci un token e poi procediamo normalmente.
+  // Link “pulito” senza token -> genera token dal server
   useEffect(() => {
     let cancelled = false;
 
@@ -255,41 +212,35 @@ export default function MicroPoll() {
 
       const qid = (u.searchParams.get("question_id") || "").trim();
       const email = (u.searchParams.get("email") || "").trim();
-
-      // Senza questi due non possiamo generare un token lato server
       if (!qid || !email) return;
 
-      const flowParam = String(u.searchParams.get("flow") || "").trim().toLowerCase();
-      const modeParam = String(u.searchParams.get("mode") || u.searchParams.get("m") || "")
+      let flowParam = String(u.searchParams.get("flow") || "").trim().toLowerCase();
+      let modeParam = String(u.searchParams.get("mode") || u.searchParams.get("m") || "")
         .trim()
         .toLowerCase();
 
-      const normalizedFlow = ["speaker", "listener", "pioneer"].includes(flowParam) ? flowParam : "";
+      if (!["speaker", "listener", "pioneer"].includes(flowParam)) {
+        flowParam = MULTI_QUESTION_IDS.has(qid) ? "listener" : "";
+      }
 
-      // If user opens a "clean" link without flow/mode, infer from question id
-      let inferredFlow = normalizedFlow;
-      if (!inferredFlow && MULTI_QUESTION_IDS.has(qid)) inferredFlow = "listener";
-
-      // If mode missing, infer from flow
-      let inferredMode = modeParam;
-      if (!inferredMode) inferredMode = inferredFlow === "listener" ? "multi" : "yn";
+      if (!(modeParam === "multi" || modeParam === "yn")) {
+        modeParam = flowParam === "listener" ? "multi" : "yn";
+      }
 
       const qs = new URLSearchParams();
       qs.set("question_id", qid);
       qs.set("email", email);
-      if (inferredFlow) qs.set("flow", inferredFlow);
-      if (inferredMode === "multi" || inferredMode === "yn") qs.set("mode", inferredMode);
+      if (flowParam) qs.set("flow", flowParam);
+      if (modeParam) qs.set("mode", modeParam);
 
       try {
-        // Proviamo prima una risposta JSON (se la function la supporta).
-        // Se invece risponde con redirect, lo seguiamo.
         const res = await fetch(`/.netlify/functions/micro-poll-link?${qs.toString()}`, {
           method: "GET",
           redirect: "manual",
           headers: { Accept: "application/json" },
         });
 
-        // Redirect server-side: vai alla Location
+        // Redirect: vai alla Location
         if (res.status >= 300 && res.status < 400) {
           const loc = res.headers.get("Location");
           if (loc) {
@@ -298,17 +249,16 @@ export default function MicroPoll() {
           }
         }
 
-        // Se è JSON e contiene token, usiamolo senza cambiare URL (fallback)
         const data = await res.json().catch(() => null);
         if (!data) throw new Error("Risposta non valida");
 
-        const t = data.token || data.t || "";
+        const t = String(data.token || data.t || "").trim();
         if (!t) throw new Error(data.error || "Token non generato");
 
         if (!cancelled) {
-          setTokenOverride(String(t));
+          setTokenOverride(t);
 
-          // opzionale: se la function ci passa testo/opzioni, li usiamo
+          // se arriva anche meta, usala subito
           if (data.question_text || data.question) {
             setQuestionText(String(data.question_text || data.question));
           }
@@ -338,14 +288,135 @@ export default function MicroPoll() {
     return () => {
       cancelled = true;
     };
+  }, [url, effectiveToken]);
+
+  // ✅ Con token presente: prende dal server la domanda/opzioni reali (no placeholder)
+  useEffect(() => {
+    let cancelled = false;
+
+    const fetchMetaFromToken = async () => {
+      const t = String(effectiveToken || "").trim();
+      if (!t) return;
+
+      try {
+        const qs = new URLSearchParams();
+        qs.set("token", t);
+        if (flow) qs.set("flow", flow);
+        if (mode) qs.set("mode", mode);
+
+        const res = await fetch(`/.netlify/functions/micro-poll-link?${qs.toString()}`, {
+          method: "GET",
+          headers: { Accept: "application/json" },
+        });
+
+        const data = await res.json().catch(() => null);
+        if (!data || data.ok !== true) return;
+        if (cancelled) return;
+
+        if (data.question_text || data.question) {
+          setQuestionText(String(data.question_text || data.question));
+        }
+
+        if (Array.isArray(data.options) && data.options.length >= 2) {
+          setOptions((prev) => ({ ...prev, multi: data.options.map((x) => String(x)) }));
+        }
+
+        if (data.option_yes || data.option_no) {
+          setOptions((prev) => ({
+            ...prev,
+            yn: {
+              yes: String(data.option_yes || prev.yn.yes),
+              no: String(data.option_no || prev.yn.no),
+            },
+          }));
+        }
+      } catch {
+        // silent
+      }
+    };
+
+    fetchMetaFromToken();
+
+    return () => {
+      cancelled = true;
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [url, effectiveToken, mode]);
+  }, [effectiveToken, flow, mode]);
+
+  const submitVote = async (choice) => {
+    if (!effectiveToken) {
+      setStatus("error");
+      setErr("Token mancante. Apri il link dall’email.");
+      return;
+    }
+
+    const ok = window.confirm("Sei sicuro della tua risposta? Non potrai cambiarla.");
+    if (!ok) return;
+
+    try {
+      setStatus("saving");
+      setErr("");
+
+      const res = await fetch("/.netlify/functions/micro-poll-vote", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          token: effectiveToken,
+          choice,
+          flow,
+          mode,
+          question_id: questionId,
+        }),
+      });
+
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data?.error || "Errore salvataggio");
+
+      if (data.already_voted) setStatus("already");
+      else setStatus("saved");
+    } catch (e) {
+      setStatus("error");
+      setErr(e?.message || "Errore inatteso");
+    }
+  };
 
   return (
-    <div style={{ minHeight: "100vh", background: "#020308", color: "#fff", display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }}>
-      <div style={{ maxWidth: 520, width: "100%", background: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.08)", borderRadius: 16, padding: 20 }}>
-        <img alt="Vocal T World" src="https://survey.vocaltworld.com/logo-vtw.png" style={{ maxWidth: 140, display: "block", margin: "0 auto 14px auto" }} />
-        <h1 style={{ textAlign: "center", margin: "0 0 12px 0", fontSize: 18, letterSpacing: 1, textTransform: "uppercase" }}>
+    <div
+      style={{
+        minHeight: "100vh",
+        background: "#020308",
+        color: "#fff",
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+        padding: 16,
+      }}
+    >
+      <div
+        style={{
+          maxWidth: 520,
+          width: "100%",
+          background: "rgba(255,255,255,0.04)",
+          border: "1px solid rgba(255,255,255,0.08)",
+          borderRadius: 16,
+          padding: 20,
+        }}
+      >
+        <img
+          alt="Vocal T World"
+          src="https://survey.vocaltworld.com/logo-vtw.png"
+          style={{ maxWidth: 140, display: "block", margin: "0 auto 14px auto" }}
+        />
+
+        <h1
+          style={{
+            textAlign: "center",
+            margin: "0 0 12px 0",
+            fontSize: 18,
+            letterSpacing: 1,
+            textTransform: "uppercase",
+          }}
+        >
           Vocal T World
         </h1>
 
@@ -356,7 +427,7 @@ export default function MicroPoll() {
         {mode === "multi" ? (
           <div style={{ display: "grid", gap: 10 }}>
             {(options.multi || ["Opzione 1", "Opzione 2", "Opzione 3", "Opzione 4"]).map((label, idx) => {
-              const choice = String(idx + 1); // 1..4 (compatibile con backend semplice)
+              const choice = String(idx + 1); // 1..4
               return (
                 <button
                   key={choice}
@@ -407,7 +478,7 @@ export default function MicroPoll() {
           ID domanda: {questionId || "-"}
           {mode ? ` • mode: ${mode}` : ""}
           {flow ? ` • flow: ${flow}` : ""}
-          {(tokenFromUrl || tokenOverride) ? " • token: ok" : " • token: -"}
+          {effectiveToken ? " • token: ok" : " • token: -"}
         </div>
       </div>
     </div>
