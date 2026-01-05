@@ -55,54 +55,66 @@ export default function MicroPoll() {
   }
 
   const tokenPayload = useMemo(() => {
-    if (!tokenFromUrl && !tokenOverride) return null;
-    const raw = tokenOverride || tokenFromUrl;
-    const [data] = String(raw).split(".");
-    if (!data) return null;
-    const txt = base64urlToString(data);
+    const raw = (tokenOverride || tokenFromUrl || "").trim();
+    if (!raw) return null;
+
+    const parts = raw.split(".");
+
+    // Token formats supported:
+    // - JWT: header.payload.signature
+    // - Legacy: data.signature
+    let payloadB64 = "";
+    if (parts.length === 3) payloadB64 = parts[1];
+    else if (parts.length === 2) payloadB64 = parts[0];
+    else return null;
+
+    if (!payloadB64) return null;
+
+    const txt = base64urlToString(payloadB64);
     return safeJsonParse(txt);
   }, [tokenFromUrl, tokenOverride]);
+
+  const flow = useMemo(() => {
+    // Priorità: querystring -> token payload -> ""
+    try {
+      const u = new URL(url);
+      const f = String(u.searchParams.get("flow") || "")
+        .trim()
+        .toLowerCase();
+      if (f) return f;
+    } catch {
+      // ignore
+    }
+
+    const f2 = String(tokenPayload?.f || tokenPayload?.flow || "")
+      .trim()
+      .toLowerCase();
+    return f2;
+  }, [url, tokenPayload]);
 
   const mode = useMemo(() => {
     // Priorità: querystring -> token payload -> flow -> default
     try {
       const u = new URL(url);
-      const m = String(
-        u.searchParams.get("mode") || u.searchParams.get("m") || ""
-      )
+      const m = String(u.searchParams.get("mode") || u.searchParams.get("m") || "")
         .trim()
         .toLowerCase();
       if (m) return m;
-
-      // Se non c'è mode esplicito, deduciamo dal flow in URL
-      const flowQ = String(u.searchParams.get("flow") || "")
-        .trim()
-        .toLowerCase();
-      if (flowQ === "listener") return "multi";
-    } catch {}
+    } catch {
+      // ignore
+    }
 
     const m2 = String(tokenPayload?.m || tokenPayload?.mode || "")
       .trim()
       .toLowerCase();
     if (m2) return m2;
 
-    // Se non c'è mode nel token, deduciamo dal flow nel token
-    const flowT = String(tokenPayload?.f || tokenPayload?.flow || "")
-      .trim()
-      .toLowerCase();
-    if (flowT === "listener") return "multi";
+    // Deduciamo dal flow (URL o token)
+    const f = String(flow || "").trim().toLowerCase();
+    if (f === "listener") return "multi";
 
-    return "yn"; // compatibilità: Speaker (SI/NO)
-  }, [url, tokenPayload]);
-
-  const flow = useMemo(() => {
-    try {
-      const u = new URL(url);
-      return String(u.searchParams.get("flow") || "").trim().toLowerCase();
-    } catch {
-      return "";
-    }
-  }, [url]);
+    return "yn"; // default: Speaker (Sì/No)
+  }, [url, tokenPayload, flow]);
 
   // Domanda + opzioni (fallback safe: non rompe nulla se non arrivano dati extra)
   const [questionText, setQuestionText] = useState(
@@ -184,7 +196,7 @@ export default function MicroPoll() {
       const res = await fetch("/.netlify/functions/micro-poll-vote", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ token: effectiveToken, choice }),
+        body: JSON.stringify({ token: effectiveToken, choice, flow }),
       });
 
       const data = await res.json().catch(() => ({}));
@@ -215,16 +227,17 @@ export default function MicroPoll() {
 
       const qid = (u.searchParams.get("question_id") || "").trim();
       const email = (u.searchParams.get("email") || "").trim();
+      const flowParam = String(u.searchParams.get("flow") || "").trim();
+      const modeParam = (u.searchParams.get("mode") || u.searchParams.get("m") || "").trim();
 
       // Senza questi due non possiamo generare un token lato server
       if (!qid || !email) return;
 
-      const flowParam = (u.searchParams.get("flow") || "").trim();
-      const modeParam = (u.searchParams.get("mode") || u.searchParams.get("m") || "").trim();
-
       const qs = new URLSearchParams();
       qs.set("question_id", qid);
       qs.set("email", email);
+      // Se è listener e non è stato passato mode, forziamo multi per coerenza UI
+      if (flowParam && !modeParam) qs.set("mode", flowParam === "listener" ? "multi" : "yn");
       if (flowParam) qs.set("flow", flowParam);
       if (modeParam) qs.set("mode", modeParam);
 
