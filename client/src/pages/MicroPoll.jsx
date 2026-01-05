@@ -1,14 +1,15 @@
 import React, { useEffect, useMemo, useState } from "react";
 
+const DEFAULT_Q =
+  "Quale direzione ti convince di più per il futuro di Vocal T World?";
+
 export default function MicroPoll() {
   const [status, setStatus] = useState("idle"); // idle | saving | saved | already | error
   const [err, setErr] = useState("");
 
-  // Supporto link /micro?question_id=...&email=... (senza token in URL)
-  const [tokenOverride, setTokenOverride] = useState("");
-
   const url = typeof window !== "undefined" ? window.location.href : "";
 
+  const [tokenOverride, setTokenOverride] = useState("");
   const tokenFromUrl = useMemo(() => {
     try {
       const u = new URL(url);
@@ -20,6 +21,7 @@ export default function MicroPoll() {
 
   const effectiveToken = (tokenOverride || tokenFromUrl || "").trim();
 
+  // ---- helpers
   function base64urlToString(b64url) {
     const b64 = String(b64url || "").replace(/-/g, "+").replace(/_/g, "/");
     const pad = b64.length % 4 ? "=".repeat(4 - (b64.length % 4)) : "";
@@ -38,165 +40,47 @@ export default function MicroPoll() {
     }
   }
 
-  // Decodifica payload token (supporta JWT e legacy)
+  // ---- token payload (JWT support)
   const tokenPayload = useMemo(() => {
     const raw = String(effectiveToken || "").trim();
     if (!raw) return null;
 
     const parts = raw.split(".");
-    // JWT: header.payload.signature
-    // Legacy: data.signature
-    let payloadB64 = "";
-    if (parts.length === 3) payloadB64 = parts[1];
-    else if (parts.length === 2) payloadB64 = parts[0];
-    else return null;
-
-    if (!payloadB64) return null;
+    if (parts.length !== 3) return null; // we only support JWT now
+    const payloadB64 = parts[1];
     const txt = base64urlToString(payloadB64);
     return safeJsonParse(txt);
   }, [effectiveToken]);
 
-  // ⚙️ If redirects lose flow/mode, infer from known question ids.
-  const MULTI_QUESTION_IDS = new Set([
-    "bce70204-ab86-4e90-8f0f-53e08b77edd3", // listener (multi)
-  ]);
-
+  // ---- derive question_id (from query OR token payload)
   const questionId = useMemo(() => {
     try {
       const u = new URL(url);
-
-      // /micro?question_id=<uuid> | /micro?qid=<uuid>
-      const qid = u.searchParams.get("question_id") || u.searchParams.get("qid") || "";
+      const qid = (u.searchParams.get("question_id") ||
+        u.searchParams.get("qid") ||
+        "").trim();
       if (qid) return qid;
-
-      // Se abbiamo solo ?token=..., ricaviamo question_id dal payload
-      const tq = String(tokenPayload?.q || tokenPayload?.question_id || "").trim();
-      if (tq) return tq;
-
-      // Legacy route: /poll/<id>
-      const parts = u.pathname.split("/").filter(Boolean);
-      const idx = parts.indexOf("poll");
-      return idx >= 0 ? parts[idx + 1] || "" : "";
     } catch {
-      return "";
+      // ignore
     }
+
+    // from token payload (our server uses q)
+    const tq = String(tokenPayload?.q || "").trim();
+    return tq || "";
   }, [url, tokenPayload]);
 
-  const flow = useMemo(() => {
-    // Priorità: querystring -> token payload -> inference -> ""
-    let f = "";
-    try {
-      const u = new URL(url);
-      f = String(u.searchParams.get("flow") || "").trim().toLowerCase();
-    } catch {
-      // ignore
-    }
+  // ---- flow + mode (prefer server truth later)
+  const [flow, setFlow] = useState("");
+  const [mode, setMode] = useState("yn"); // yn | multi
 
-    if (!f) {
-      f = String(tokenPayload?.f || tokenPayload?.flow || "").trim().toLowerCase();
-    }
-
-    if (!f && questionId && MULTI_QUESTION_IDS.has(String(questionId).trim())) {
-      f = "listener";
-    }
-
-    if (["speaker", "listener", "pioneer"].includes(f)) return f;
-    return "";
-  }, [url, tokenPayload, questionId]);
-
-  const mode = useMemo(() => {
-    // 1) querystring
-    try {
-      const u = new URL(url);
-      const m = String(u.searchParams.get("mode") || u.searchParams.get("m") || "")
-        .trim()
-        .toLowerCase();
-      if (m === "multi" || m === "yn") return m;
-    } catch {
-      // ignore
-    }
-
-    // 2) token payload
-    const m2 = String(tokenPayload?.m || tokenPayload?.mode || "").trim().toLowerCase();
-    if (m2 === "multi" || m2 === "yn") return m2;
-
-    // 3) inference by questionId / flow
-    if (questionId && MULTI_QUESTION_IDS.has(String(questionId).trim())) return "multi";
-    if (flow === "listener") return "multi";
-    if (flow === "speaker" || flow === "pioneer") return "yn";
-
-    return "yn";
-  }, [url, tokenPayload, questionId, flow]);
-
-  // Domanda + opzioni (fallback safe)
-  const DEFAULT_QUESTION = "Quale direzione ti convince di più per il futuro di Vocal T World?";
-
-  const [questionText, setQuestionText] = useState(DEFAULT_QUESTION);
-  const [options, setOptions] = useState(() => ({
+  // ---- question + options UI
+  const [questionText, setQuestionText] = useState(DEFAULT_Q);
+  const [options, setOptions] = useState({
     yn: { yes: "Sì", no: "No" },
     multi: ["Opzione 1", "Opzione 2", "Opzione 3", "Opzione 4"],
-  }));
+  });
 
-  // Legge eventuali override da querystring o token payload
-  useEffect(() => {
-    try {
-      const u = new URL(url);
-
-      const q = u.searchParams.get("q");
-      if (q) setQuestionText(q);
-
-      // Y/N labels
-      const yesLabel = u.searchParams.get("yes") || u.searchParams.get("option_yes") || "";
-      const noLabel = u.searchParams.get("no") || u.searchParams.get("option_no") || "";
-
-      // MULTI labels
-      const m1 = u.searchParams.get("o1") || u.searchParams.get("opt1") || u.searchParams.get("a");
-      const m2 = u.searchParams.get("o2") || u.searchParams.get("opt2") || u.searchParams.get("b");
-      const m3 = u.searchParams.get("o3") || u.searchParams.get("opt3") || u.searchParams.get("c");
-      const m4 = u.searchParams.get("o4") || u.searchParams.get("opt4") || u.searchParams.get("d");
-
-      // Token payload hints
-      const pQ = tokenPayload?.qt || tokenPayload?.question_text || tokenPayload?.question;
-      const pYes = tokenPayload?.yes || tokenPayload?.option_yes;
-      const pNo = tokenPayload?.no || tokenPayload?.option_no;
-      const pMulti = Array.isArray(tokenPayload?.options) ? tokenPayload.options : null;
-
-      if (pQ) setQuestionText(String(pQ));
-
-      setOptions((prev) => {
-        const next = { ...prev };
-
-        if (yesLabel || noLabel || pYes || pNo) {
-          next.yn = {
-            yes: String(yesLabel || pYes || prev.yn.yes),
-            no: String(noLabel || pNo || prev.yn.no),
-          };
-        }
-
-        if (pMulti && pMulti.length >= 2) {
-          next.multi = pMulti.map((x) => String(x));
-        } else {
-          const multiFromUrl = [m1, m2, m3, m4].filter((x) => x != null && String(x).trim() !== "");
-          if (multiFromUrl.length >= 2) {
-            const filled = [
-              m1 || prev.multi?.[0] || "Opzione 1",
-              m2 || prev.multi?.[1] || "Opzione 2",
-              m3 || prev.multi?.[2] || "Opzione 3",
-              m4 || prev.multi?.[3] || "Opzione 4",
-            ];
-            next.multi = filled.map((x) => String(x));
-          }
-        }
-
-        return next;
-      });
-    } catch {
-      // ignore
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [url, tokenPayload]);
-
-  // Link “pulito” senza token -> genera token dal server
+  // ---- If coming with clean link (no token): generate token via server and redirect OR set tokenOverride
   useEffect(() => {
     let cancelled = false;
 
@@ -214,67 +98,43 @@ export default function MicroPoll() {
       const email = (u.searchParams.get("email") || "").trim();
       if (!qid || !email) return;
 
-      let flowParam = String(u.searchParams.get("flow") || "").trim().toLowerCase();
-      let modeParam = String(u.searchParams.get("mode") || u.searchParams.get("m") || "")
+      const f = String(u.searchParams.get("flow") || "").trim().toLowerCase();
+      const m = String(
+        u.searchParams.get("mode") || u.searchParams.get("m") || ""
+      )
         .trim()
         .toLowerCase();
-
-      if (!["speaker", "listener", "pioneer"].includes(flowParam)) {
-        flowParam = MULTI_QUESTION_IDS.has(qid) ? "listener" : "";
-      }
-
-      if (!(modeParam === "multi" || modeParam === "yn")) {
-        modeParam = flowParam === "listener" ? "multi" : "yn";
-      }
 
       const qs = new URLSearchParams();
       qs.set("question_id", qid);
       qs.set("email", email);
-      if (flowParam) qs.set("flow", flowParam);
-      if (modeParam) qs.set("mode", modeParam);
+      if (f) qs.set("flow", f);
+      if (m) qs.set("mode", m);
+      qs.set("format", "json");
 
       try {
-        const res = await fetch(`/.netlify/functions/micro-poll-link?${qs.toString()}`, {
-          method: "GET",
-          redirect: "manual",
-          headers: { Accept: "application/json" },
-        });
-
-        // Redirect: vai alla Location
-        if (res.status >= 300 && res.status < 400) {
-          const loc = res.headers.get("Location");
-          if (loc) {
-            window.location.href = loc;
-            return;
-          }
-        }
+        const res = await fetch(
+          `/.netlify/functions/micro-poll-link?${qs.toString()}`,
+          { method: "GET", headers: { Accept: "application/json" } }
+        );
 
         const data = await res.json().catch(() => null);
-        if (!data) throw new Error("Risposta non valida");
+        if (!res.ok || !data) throw new Error(data?.error || "Token non generato");
 
-        const t = String(data.token || data.t || "").trim();
-        if (!t) throw new Error(data.error || "Token non generato");
+        const t = String(data.token || "").trim();
+        if (!t) throw new Error("Token non generato");
 
-        if (!cancelled) {
-          setTokenOverride(t);
+        if (cancelled) return;
 
-          // se arriva anche meta, usala subito
-          if (data.question_text || data.question) {
-            setQuestionText(String(data.question_text || data.question));
-          }
-          if (Array.isArray(data.options)) {
-            setOptions((prev) => ({ ...prev, multi: data.options.map((x) => String(x)) }));
-          }
-          if (data.option_yes || data.option_no) {
-            setOptions((prev) => ({
-              ...prev,
-              yn: {
-                yes: String(data.option_yes || prev.yn.yes),
-                no: String(data.option_no || prev.yn.no),
-              },
-            }));
-          }
+        setTokenOverride(t);
+
+        // if server also returns meta, use it immediately
+        if (data.question) setQuestionText(String(data.question));
+        if (Array.isArray(data.options) && data.options.length >= 2) {
+          setOptions((prev) => ({ ...prev, multi: data.options.map(String) }));
         }
+        if (data.flow) setFlow(String(data.flow));
+        if (data.mode) setMode(String(data.mode));
       } catch (e) {
         if (!cancelled) {
           setStatus("error");
@@ -284,64 +144,55 @@ export default function MicroPoll() {
     };
 
     hydrateTokenIfNeeded();
-
     return () => {
       cancelled = true;
     };
   }, [url, effectiveToken]);
 
-  // ✅ Con token presente: prende dal server la domanda/opzioni reali (no placeholder)
+  // ---- When we have a token: fetch real question/options from server (because JWT may not include options)
   useEffect(() => {
     let cancelled = false;
 
-    const fetchMetaFromToken = async () => {
+    const fetchMeta = async () => {
       const t = String(effectiveToken || "").trim();
       if (!t) return;
 
       try {
         const qs = new URLSearchParams();
         qs.set("token", t);
-        if (flow) qs.set("flow", flow);
-        if (mode) qs.set("mode", mode);
+        qs.set("format", "json");
 
-        const res = await fetch(`/.netlify/functions/micro-poll-link?${qs.toString()}`, {
-          method: "GET",
-          headers: { Accept: "application/json" },
-        });
-
+        const res = await fetch(
+          `/.netlify/functions/micro-poll-link?${qs.toString()}`,
+          { method: "GET", headers: { Accept: "application/json" } }
+        );
         const data = await res.json().catch(() => null);
-        if (!data || data.ok !== true) return;
+        if (!res.ok || !data) throw new Error(data?.error || "Meta non disponibile");
+
         if (cancelled) return;
 
-        if (data.question_text || data.question) {
-          setQuestionText(String(data.question_text || data.question));
-        }
-
+        if (data.question) setQuestionText(String(data.question));
         if (Array.isArray(data.options) && data.options.length >= 2) {
-          setOptions((prev) => ({ ...prev, multi: data.options.map((x) => String(x)) }));
+          setOptions((prev) => ({ ...prev, multi: data.options.map(String) }));
         }
 
-        if (data.option_yes || data.option_no) {
-          setOptions((prev) => ({
-            ...prev,
-            yn: {
-              yes: String(data.option_yes || prev.yn.yes),
-              no: String(data.option_no || prev.yn.no),
-            },
-          }));
+        // server truth for flow/mode
+        if (data.flow) setFlow(String(data.flow));
+        if (data.mode) setMode(String(data.mode));
+      } catch (e) {
+        // non blocchiamo la pagina: lasciamo fallback, ma mostriamo errore soft
+        if (!cancelled) {
+          setStatus((s) => (s === "idle" ? "error" : s));
+          setErr(e?.message || "Errore lettura dati sondaggio");
         }
-      } catch {
-        // silent
       }
     };
 
-    fetchMetaFromToken();
-
+    fetchMeta();
     return () => {
       cancelled = true;
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [effectiveToken, flow, mode]);
+  }, [effectiveToken]);
 
   const submitVote = async (choice) => {
     if (!effectiveToken) {
@@ -363,9 +214,9 @@ export default function MicroPoll() {
         body: JSON.stringify({
           token: effectiveToken,
           choice,
+          question_id: questionId,
           flow,
           mode,
-          question_id: questionId,
         }),
       });
 
@@ -380,6 +231,48 @@ export default function MicroPoll() {
     }
   };
 
+  // --- UI (come prima, gradient)
+  const cardStyle = {
+    maxWidth: 720,
+    width: "100%",
+    background: "rgba(255,255,255,0.04)",
+    border: "1px solid rgba(255,255,255,0.08)",
+    borderRadius: 18,
+    padding: 22,
+    boxShadow: "0 20px 80px rgba(0,0,0,0.55)",
+  };
+
+  const btnBase = {
+    width: "100%",
+    padding: "14px 16px",
+    borderRadius: 999,
+    border: 0,
+    fontWeight: 800,
+    cursor: "pointer",
+    color: "#fff",
+    letterSpacing: 0.2,
+  };
+
+  const btnYes = {
+    ...btnBase,
+    background: "linear-gradient(90deg, #1fb6ff, #2f62ff)",
+  };
+
+  const btnNo = {
+    ...btnBase,
+    background: "linear-gradient(90deg, #ff2ea6, #ff7b3d)",
+  };
+
+  const btnMulti = {
+    ...btnBase,
+    background: "linear-gradient(90deg, rgba(255,255,255,0.16), rgba(255,255,255,0.10))",
+    color: "rgba(255,255,255,0.92)",
+    border: "1px solid rgba(255,255,255,0.10)",
+  };
+
+  const disabled =
+    status === "saving" || status === "saved" || status === "already";
+
   return (
     <div
       style={{
@@ -392,16 +285,7 @@ export default function MicroPoll() {
         padding: 16,
       }}
     >
-      <div
-        style={{
-          maxWidth: 520,
-          width: "100%",
-          background: "rgba(255,255,255,0.04)",
-          border: "1px solid rgba(255,255,255,0.08)",
-          borderRadius: 16,
-          padding: 20,
-        }}
-      >
+      <div style={cardStyle}>
         <img
           alt="Vocal T World"
           src="https://survey.vocaltworld.com/logo-vtw.png"
@@ -411,7 +295,7 @@ export default function MicroPoll() {
         <h1
           style={{
             textAlign: "center",
-            margin: "0 0 12px 0",
+            margin: "0 0 10px 0",
             fontSize: 18,
             letterSpacing: 1,
             textTransform: "uppercase",
@@ -420,27 +304,40 @@ export default function MicroPoll() {
           Vocal T World
         </h1>
 
-        <p style={{ textAlign: "center", color: "rgba(255,255,255,0.85)", lineHeight: 1.6, margin: "0 0 16px 0" }}>
+        <p
+          style={{
+            textAlign: "center",
+            color: "rgba(255,255,255,0.88)",
+            lineHeight: 1.6,
+            margin: "0 0 16px 0",
+            fontSize: 18,
+            fontWeight: 700,
+          }}
+        >
           {questionText}
         </p>
 
+        <p
+          style={{
+            textAlign: "center",
+            color: "rgba(255,255,255,0.60)",
+            margin: "0 0 18px 0",
+            fontSize: 13,
+          }}
+        >
+          Puoi partecipare una sola volta. Scegli un’opzione e poi conferma.
+        </p>
+
         {mode === "multi" ? (
-          <div style={{ display: "grid", gap: 10 }}>
-            {(options.multi || ["Opzione 1", "Opzione 2", "Opzione 3", "Opzione 4"]).map((label, idx) => {
-              const choice = String(idx + 1); // 1..4
+          <div style={{ display: "grid", gap: 12 }}>
+            {(options.multi || []).slice(0, 4).map((label, idx) => {
+              const choice = String(idx + 1);
               return (
                 <button
                   key={choice}
                   onClick={() => submitVote(choice)}
-                  disabled={status === "saving" || status === "saved" || status === "already"}
-                  style={{
-                    width: "100%",
-                    padding: "12px 14px",
-                    borderRadius: 999,
-                    border: 0,
-                    fontWeight: 800,
-                    cursor: "pointer",
-                  }}
+                  disabled={disabled}
+                  style={btnMulti}
                 >
                   {label || `Opzione ${idx + 1}`}
                 </button>
@@ -448,37 +345,51 @@ export default function MicroPoll() {
             })}
           </div>
         ) : (
-          <div style={{ display: "flex", gap: 10 }}>
+          <div style={{ display: "flex", gap: 12 }}>
             <button
               onClick={() => submitVote("1")}
-              disabled={status === "saving" || status === "saved" || status === "already"}
-              style={{ flex: 1, padding: "12px 14px", borderRadius: 999, border: 0, fontWeight: 800, cursor: "pointer" }}
+              disabled={disabled}
+              style={{ ...btnYes, flex: 1 }}
             >
               {options.yn?.yes || "Sì"}
             </button>
 
             <button
               onClick={() => submitVote("2")}
-              disabled={status === "saving" || status === "saved" || status === "already"}
-              style={{ flex: 1, padding: "12px 14px", borderRadius: 999, border: 0, fontWeight: 800, cursor: "pointer" }}
+              disabled={disabled}
+              style={{ ...btnNo, flex: 1 }}
             >
               {options.yn?.no || "No"}
             </button>
           </div>
         )}
 
-        <div style={{ marginTop: 14, textAlign: "center", minHeight: 22, color: "rgba(255,255,255,0.8)" }}>
+        <div
+          style={{
+            marginTop: 14,
+            textAlign: "center",
+            minHeight: 22,
+            color: "rgba(255,255,255,0.8)",
+          }}
+        >
           {status === "saving" && "Sto salvando…"}
           {status === "saved" && "Risposta salvata ✅ Grazie."}
           {status === "already" && "Hai già partecipato ✅"}
-          {status === "error" && <span style={{ color: "#ff7b7b" }}>Errore: {err}</span>}
+          {status === "error" && (
+            <span style={{ color: "#ff7b7b" }}>Errore: {err}</span>
+          )}
         </div>
 
-        <div style={{ marginTop: 8, textAlign: "center", color: "rgba(255,255,255,0.35)", fontSize: 12 }}>
-          ID domanda: {questionId || "-"}
-          {mode ? ` • mode: ${mode}` : ""}
-          {flow ? ` • flow: ${flow}` : ""}
-          {effectiveToken ? " • token: ok" : " • token: -"}
+        <div
+          style={{
+            marginTop: 10,
+            textAlign: "center",
+            color: "rgba(255,255,255,0.35)",
+            fontSize: 12,
+          }}
+        >
+          ID domanda: {questionId || "-"} • mode: {mode || "-"} • flow:{" "}
+          {flow || "-"} • token: {effectiveToken ? "ok" : "-"}
         </div>
       </div>
     </div>

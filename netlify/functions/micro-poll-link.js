@@ -195,6 +195,11 @@ exports.handler = async (event) => {
       }
     }
 
+    // ✅ JSON detection allineato (query/body/header)
+    const accept = String(event?.headers?.accept || event?.headers?.Accept || "").toLowerCase();
+    const formatParam = String(qs.format || payload.format || "").trim().toLowerCase();
+    const wantsJson = formatParam === "json" || accept.includes("application/json");
+
     const questionId = String(
       payload.question_id ||
         payload.questionId ||
@@ -207,13 +212,7 @@ exports.handler = async (event) => {
         ""
     ).trim();
 
-    const flow = normalizeFlow(
-      payload.flow ||
-        payload.f ||
-        qs.flow ||
-        qs.f ||
-        "speaker"
-    );
+    const flow = normalizeFlow(payload.flow || payload.f || qs.flow || qs.f || "speaker");
 
     // Email può arrivare come raw o come base64url (consigliato: email_b64url)
     const emailRaw = payload.email || payload.e || qs.email || qs.e;
@@ -246,9 +245,10 @@ exports.handler = async (event) => {
         qs.redirectBase ||
         "https://survey.vocaltworld.com"
     );
-      // ✅ Shortcut: se arriva già un token, possiamo:
+
+    // ✅ Shortcut: se arriva già un token, possiamo:
     // - redirect verso /micro?token=...
-    // - oppure (format=json) restituire anche question/mode/options leggendo da Supabase
+    // - oppure (json) restituire anche question/mode/options leggendo da Supabase
     const tokenFromQs = String(qs.token || payload.token || "").trim();
 
     function safeEqual(a, b) {
@@ -286,15 +286,14 @@ exports.handler = async (event) => {
 
     if (tokenFromQs) {
       const headers = corsHeaders(origin);
-      const format = String(qs.format || "").toLowerCase();
 
       // Redirect classico (click da email)
       const url = `${redirectBase}/micro?token=${encodeURIComponent(tokenFromQs)}`;
-      if (event.httpMethod === "GET" && format !== "json") {
+      if (event.httpMethod === "GET" && !wantsJson) {
         return redirect(302, url, headers);
       }
 
-      // format=json: arricchiamo con domanda/opzioni (così il frontend non mostra placeholder)
+      // JSON: arricchiamo con domanda/opzioni (così il frontend non mostra placeholder)
       const v = verifyJwtHS256(MICRO_POLL_SECRET, tokenFromQs);
       if (!v.ok) return json(401, { ok: false, error: v.error }, headers);
 
@@ -361,11 +360,12 @@ exports.handler = async (event) => {
     if (q.row.active === false) {
       return json(400, { ok: false, error: "Question is not active", question_id: questionId }, corsHeaders(origin));
     }
+
     // ✅ Flow e mode devono seguire la domanda (evita mix Speaker/Listener)
-// NB: se la domanda non ha `flow` valido in DB, NON forziamo 'speaker' automaticamente.
-const dbFlow = normalizeFlowOptional(q.row.flow || "");
-const effectiveFlow = dbFlow ? dbFlow : flow;
-const effectiveMode = String(q.mode || "yn").trim().toLowerCase();
+    // NB: se la domanda non ha `flow` valido in DB, NON forziamo 'speaker' automaticamente.
+    const dbFlow = normalizeFlowOptional(q.row.flow || "");
+    const effectiveFlow = dbFlow ? dbFlow : flow;
+    const effectiveMode = String(q.mode || "yn").trim().toLowerCase();
 
     // Scadenza token: 7 giorni (manteniamo ms per compatibilità con la logica lato vote)
     const exp = Date.now() + 7 * 24 * 60 * 60 * 1000;
@@ -384,24 +384,25 @@ const effectiveMode = String(q.mode || "yn").trim().toLowerCase();
     const token = `${signingInput}.${sigB64}`;
 
     // URL completo della pagina voto (usato solo per redirect)
-   const url = `${redirectBase}/micro?token=${encodeURIComponent(token)}`;
+    const url = `${redirectBase}/micro?token=${encodeURIComponent(token)}`;
 
     const headers = corsHeaders(origin);
 
     // Se è una chiamata GET da email/click, reindirizziamo direttamente alla pagina voto.
-    // Se invece vuoi il JSON (fetch da VotePage), usa ?format=json (o POST).
-    const format = String(qs.format || "").toLowerCase();
-
-    if (event.httpMethod === "GET" && format !== "json") {
+    // Se invece vuoi il JSON (fetch dal frontend), ritorniamo JSON automaticamente.
+    if (event.httpMethod === "GET" && !wantsJson) {
       return redirect(302, url, headers);
     }
 
     // Normalizzo payload per il client
     const questionText = String(q.row.question || "");
     const options =
-  q.mode === "multi"
-    ? (Array.isArray(q.row.options) ? q.row.options : [])
-    : ["Sì", "No"];
+      q.mode === "multi"
+        ? Array.isArray(q.row.options)
+          ? q.row.options
+          : []
+        : ["Sì", "No"];
+
     return json(
       200,
       {
