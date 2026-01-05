@@ -8,6 +8,11 @@
 # ✅ API sempre prima (IMPORTANTISSIMO)
  /api/*  /.netlify/functions/:splat  200
 
+# (opzionale) shortcut comodi
+/api/micro-poll-link /.netlify/functions/micro-poll-link 200
+/api/micro-poll-vote /.netlify/functions/micro-poll-vote 200
+/api/admin-micro-polls /.netlify/functions/admin-micro-polls 200
+
 
 # ✅ SPA fallback (deve stare sotto)
  /*  /index.html  200
