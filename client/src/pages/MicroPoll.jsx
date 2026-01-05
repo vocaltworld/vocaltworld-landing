@@ -46,7 +46,7 @@ export default function MicroPoll() {
     if (!raw) return null;
 
     const parts = raw.split(".");
-    if (parts.length !== 3) return null; // we only support JWT now
+    if (parts.length !== 3) return null; // JWT only
     const payloadB64 = parts[1];
     const txt = base64urlToString(payloadB64);
     return safeJsonParse(txt);
@@ -64,7 +64,6 @@ export default function MicroPoll() {
       // ignore
     }
 
-    // from token payload (our server uses q)
     const tq = String(tokenPayload?.q || "").trim();
     return tq || "";
   }, [url, tokenPayload]);
@@ -98,7 +97,7 @@ export default function MicroPoll() {
     setPendingLabel("");
   };
 
-  // ---- If coming with clean link (no token): generate token via server and redirect OR set tokenOverride
+  // ---- If coming with clean link (no token): generate token via server
   useEffect(() => {
     let cancelled = false;
 
@@ -146,7 +145,6 @@ export default function MicroPoll() {
 
         setTokenOverride(t);
 
-        // if server also returns meta, use it immediately
         if (data.question) setQuestionText(String(data.question));
         if (Array.isArray(data.options) && data.options.length >= 2) {
           setOptions((prev) => ({ ...prev, multi: data.options.map(String) }));
@@ -167,7 +165,7 @@ export default function MicroPoll() {
     };
   }, [url, effectiveToken]);
 
-  // ---- When we have a token: fetch real question/options from server (because JWT may not include options)
+  // ---- When we have a token: fetch real question/options from server
   useEffect(() => {
     let cancelled = false;
 
@@ -194,11 +192,9 @@ export default function MicroPoll() {
           setOptions((prev) => ({ ...prev, multi: data.options.map(String) }));
         }
 
-        // server truth for flow/mode
         if (data.flow) setFlow(String(data.flow));
         if (data.mode) setMode(String(data.mode));
       } catch (e) {
-        // non blocchiamo la pagina: lasciamo fallback, ma mostriamo errore soft
         if (!cancelled) {
           setStatus((s) => (s === "idle" ? "error" : s));
           setErr(e?.message || "Errore lettura dati sondaggio");
@@ -246,9 +242,9 @@ export default function MicroPoll() {
     }
   };
 
-  // --- UI (come prima, gradient)
+  // ---------------- UI STYLES
   const cardStyle = {
-    maxWidth: 720,
+    maxWidth: 760,
     width: "100%",
     background: "rgba(255,255,255,0.04)",
     border: "1px solid rgba(255,255,255,0.08)",
@@ -262,10 +258,11 @@ export default function MicroPoll() {
     padding: "14px 16px",
     borderRadius: 999,
     border: 0,
-    fontWeight: 800,
+    fontWeight: 900,
     cursor: "pointer",
     color: "#fff",
     letterSpacing: 0.2,
+    transition: "transform 140ms ease, box-shadow 140ms ease, filter 140ms ease",
   };
 
   const btnYes = {
@@ -278,15 +275,29 @@ export default function MicroPoll() {
     background: "linear-gradient(90deg, #ff2ea6, #ff7b3d)",
   };
 
-  const btnMulti = {
-    ...btnBase,
-    background: "linear-gradient(90deg, rgba(255,255,255,0.16), rgba(255,255,255,0.10))",
-    color: "rgba(255,255,255,0.92)",
-    border: "1px solid rgba(255,255,255,0.10)",
+  // ✅ Multi: 4 gradient “pieni” (stesso vibe di sì/no)
+  const multiGradients = [
+    "linear-gradient(90deg, #1fb6ff, #2f62ff)", // blu
+    "linear-gradient(90deg, #ff2ea6, #ff7b3d)", // pink/orange
+    "linear-gradient(90deg, #22c55e, #16a34a)", // green
+    "linear-gradient(90deg, #a855f7, #6366f1)", // purple/indigo
+  ];
+
+  const getMultiBtnStyle = (idx, isSelected) => {
+    const bg = multiGradients[idx % multiGradients.length];
+    return {
+      ...btnBase,
+      background: bg,
+      boxShadow: isSelected ? "0 0 0 3px rgba(255,255,255,0.12)" : "none",
+      filter: isSelected ? "brightness(1.06)" : "none",
+      transform: isSelected ? "scale(1.01)" : "none",
+    };
   };
 
-  const disabled =
-    status === "saving" || status === "saved" || status === "already";
+  const disabled = status === "saving" || status === "saved" || status === "already";
+
+  // ✅ Quando hai finito (saved/already) mostri SOLO la schermata finale al centro
+  const isDone = status === "saved" || status === "already";
 
   return (
     <div
@@ -307,168 +318,168 @@ export default function MicroPoll() {
           style={{ maxWidth: 140, display: "block", margin: "0 auto 14px auto" }}
         />
 
-        <h1
-          style={{
-            textAlign: "center",
-            margin: "0 0 10px 0",
-            fontSize: 18,
-            letterSpacing: 1,
-            textTransform: "uppercase",
-          }}
-        >
-          Vocal T World
-        </h1>
+        {/* ✅ DONE VIEW (solo conferma / già votato) */}
+        {isDone ? (
+          <div style={styles.doneCenter}>
+            {status === "saved" ? (
+              <div style={styles.resultWrap}>
+                <div style={styles.checkCircle}>✓</div>
+                <div style={styles.resultTitle}>Risposta salvata con successo ✅</div>
+                <div style={styles.resultSub}>
+                  Grazie! La tua risposta è stata registrata.
+                </div>
+              </div>
+            ) : (
+              <div style={styles.resultWrap}>
+                <div style={styles.infoCircle}>i</div>
+                <div style={styles.resultTitle}>Hai già votato</div>
+                <div style={styles.resultSub}>
+                  Questo link è valido per una sola risposta.
+                </div>
+              </div>
+            )}
+          </div>
+        ) : (
+          <>
+            <h1
+              style={{
+                textAlign: "center",
+                margin: "0 0 10px 0",
+                fontSize: 18,
+                letterSpacing: 1,
+                textTransform: "uppercase",
+              }}
+            >
+              Vocal T World
+            </h1>
 
-        <p
-          style={{
-            textAlign: "center",
-            color: "rgba(255,255,255,0.88)",
-            lineHeight: 1.6,
-            margin: "0 0 16px 0",
-            fontSize: 18,
-            fontWeight: 700,
-          }}
-        >
-          {questionText}
-        </p>
+            <p
+              style={{
+                textAlign: "center",
+                color: "rgba(255,255,255,0.88)",
+                lineHeight: 1.6,
+                margin: "0 0 16px 0",
+                fontSize: 18,
+                fontWeight: 800,
+              }}
+            >
+              {questionText}
+            </p>
 
-        <p
-          style={{
-            textAlign: "center",
-            color: "rgba(255,255,255,0.60)",
-            margin: "0 0 18px 0",
-            fontSize: 13,
-          }}
-        >
-          Puoi partecipare una sola volta. Scegli un’opzione e poi conferma.
-        </p>
+            <p
+              style={{
+                textAlign: "center",
+                color: "rgba(255,255,255,0.60)",
+                margin: "0 0 18px 0",
+                fontSize: 13,
+              }}
+            >
+              Puoi partecipare una sola volta. Scegli un’opzione e poi conferma.
+            </p>
 
-        {mode === "multi" ? (
-          <div style={{ display: "grid", gap: 12 }}>
-            {(options.multi || []).slice(0, 4).map((label, idx) => {
-              const choice = String(idx + 1);
-              return (
+            {mode === "multi" ? (
+              <div style={{ display: "grid", gap: 12 }}>
+                {(options.multi || []).slice(0, 4).map((label, idx) => {
+                  const choice = String(idx + 1);
+                  const isSelected = selectedChoice === choice;
+                  return (
+                    <button
+                      key={choice}
+                      onClick={() => {
+                        setSelectedChoice(choice);
+                        openConfirm(choice, label || `Opzione ${idx + 1}`);
+                      }}
+                      disabled={disabled}
+                      style={getMultiBtnStyle(idx, isSelected)}
+                    >
+                      {label || `Opzione ${idx + 1}`}
+                    </button>
+                  );
+                })}
+              </div>
+            ) : (
+              <div style={{ display: "flex", gap: 12 }}>
                 <button
-                  key={choice}
                   onClick={() => {
-                    setSelectedChoice(choice);
-                    openConfirm(choice, label || `Opzione ${idx + 1}`);
+                    setSelectedChoice("1");
+                    openConfirm("1", options.yn?.yes || "Sì");
                   }}
                   disabled={disabled}
                   style={{
-                    ...btnMulti,
-                    ...(selectedChoice === choice ? styles.optionSelected : null),
+                    ...btnYes,
+                    flex: 1,
+                    ...(selectedChoice === "1" ? styles.optionSelectedYn : null),
                   }}
                 >
-                  {label || `Opzione ${idx + 1}`}
+                  {options.yn?.yes || "Sì"}
                 </button>
-              );
-            })}
-          </div>
-        ) : (
-          <div style={{ display: "flex", gap: 12 }}>
-            <button
-              onClick={() => {
-                setSelectedChoice("1");
-                openConfirm("1", options.yn?.yes || "Sì");
-              }}
-              disabled={disabled}
-              style={{
-                ...btnYes,
-                flex: 1,
-                ...(selectedChoice === "1" ? styles.optionSelectedYn : null),
-              }}
-            >
-              {options.yn?.yes || "Sì"}
-            </button>
 
-            <button
-              onClick={() => {
-                setSelectedChoice("2");
-                openConfirm("2", options.yn?.no || "No");
-              }}
-              disabled={disabled}
-              style={{
-                ...btnNo,
-                flex: 1,
-                ...(selectedChoice === "2" ? styles.optionSelectedYn : null),
-              }}
-            >
-              {options.yn?.no || "No"}
-            </button>
-          </div>
-        )}
-
-        {confirmOpen && (
-          <div style={styles.modalOverlay} onClick={closeConfirm}>
-            <div style={styles.modal} onClick={(e) => e.stopPropagation()}>
-              <div style={styles.modalTitle}>Confermi la tua scelta?</div>
-              <div style={styles.modalText}>Non potrai cambiarla.</div>
-              {pendingLabel ? (
-                <div style={styles.modalChoice}>
-                  “{pendingLabel}”
-                </div>
-              ) : null}
-
-              <div style={styles.modalActions}>
-                <button style={styles.modalBtnGhost} onClick={closeConfirm}>
-                  Annulla
-                </button>
                 <button
-                  style={styles.modalBtnPrimary}
                   onClick={() => {
-                    const c = pendingChoice;
-                    closeConfirm();
-                    if (c) submitVote(String(c));
+                    setSelectedChoice("2");
+                    openConfirm("2", options.yn?.no || "No");
+                  }}
+                  disabled={disabled}
+                  style={{
+                    ...btnNo,
+                    flex: 1,
+                    ...(selectedChoice === "2" ? styles.optionSelectedYn : null),
                   }}
                 >
-                  OK
+                  {options.yn?.no || "No"}
                 </button>
               </div>
+            )}
+
+            {confirmOpen && (
+              <div style={styles.modalOverlay} onClick={closeConfirm}>
+                <div style={styles.modal} onClick={(e) => e.stopPropagation()}>
+                  <div style={styles.modalTitle}>Confermi la tua scelta?</div>
+                  <div style={styles.modalText}>Non potrai cambiarla.</div>
+                  {pendingLabel ? <div style={styles.modalChoice}>“{pendingLabel}”</div> : null}
+
+                  <div style={styles.modalActions}>
+                    <button style={styles.modalBtnGhost} onClick={closeConfirm}>
+                      Annulla
+                    </button>
+                    <button
+                      style={styles.modalBtnPrimary}
+                      onClick={() => {
+                        const c = pendingChoice;
+                        closeConfirm();
+                        if (c) submitVote(String(c));
+                      }}
+                    >
+                      OK
+                    </button>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            <div style={{ marginTop: 14 }}>
+              {status === "saving" && <div style={styles.notice}>Sto salvando…</div>}
+              {status === "error" && <div style={styles.errorBox}>Errore: {err}</div>}
             </div>
-          </div>
+          </>
         )}
-
-        <div style={{ marginTop: 14 }}>
-          {status === "saving" && (
-            <div style={styles.notice}>Sto salvando…</div>
-          )}
-
-          {status === "saved" && (
-            <div style={styles.resultWrap}>
-              <div style={styles.checkCircle}>✓</div>
-              <div style={styles.resultTitle}>Risposta salvata con successo ✅</div>
-              <div style={styles.resultSub}>Grazie! La tua risposta è stata registrata.</div>
-            </div>
-          )}
-
-          {status === "already" && (
-            <div style={styles.resultWrap}>
-              <div style={styles.infoCircle}>i</div>
-              <div style={styles.resultTitle}>Hai già votato</div>
-              <div style={styles.resultSub}>Questo link è valido per una sola risposta.</div>
-            </div>
-          )}
-
-          {status === "error" && (
-            <div style={styles.errorBox}>Errore: {err}</div>
-          )}
-        </div>
       </div>
     </div>
   );
 }
 
 const styles = {
-  // selection highlight
-  optionSelected: {
-    border: "1px solid rgba(120,180,255,0.55)",
-    background:
-      "linear-gradient(90deg, rgba(120,180,255,0.22), rgba(255,255,255,0.10))",
-    transform: "scale(1.01)",
-  },
   optionSelectedYn: {
     boxShadow: "0 0 0 3px rgba(120,180,255,0.18)",
+  },
+
+  // ✅ center done view
+  doneCenter: {
+    padding: "10px 0 6px 0",
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "center",
+    minHeight: 260,
   },
 
   // modal
@@ -544,16 +555,16 @@ const styles = {
     minHeight: 22,
   },
   resultWrap: {
-    marginTop: 0,
-    padding: "16px 14px",
-    borderRadius: 16,
+    width: "min(560px, 100%)",
+    padding: "18px 16px",
+    borderRadius: 18,
     border: "1px solid rgba(255,255,255,0.10)",
     background: "rgba(255,255,255,0.05)",
     textAlign: "center",
   },
   checkCircle: {
-    width: 44,
-    height: 44,
+    width: 50,
+    height: 50,
     borderRadius: 999,
     margin: "0 auto",
     display: "grid",
@@ -561,11 +572,11 @@ const styles = {
     border: "2px solid rgba(90,220,160,0.55)",
     color: "rgba(90,220,160,0.95)",
     fontWeight: 900,
-    fontSize: 22,
+    fontSize: 24,
   },
   infoCircle: {
-    width: 44,
-    height: 44,
+    width: 50,
+    height: 50,
     borderRadius: 999,
     margin: "0 auto",
     display: "grid",
@@ -576,7 +587,7 @@ const styles = {
     fontSize: 18,
   },
   resultTitle: {
-    marginTop: 10,
+    marginTop: 12,
     fontSize: 16,
     fontWeight: 900,
     color: "rgba(255,255,255,0.92)",
