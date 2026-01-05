@@ -211,6 +211,9 @@ exports.handler = async (event) => {
     });
 
     const insertData = await insertRes.json().catch(() => null);
+    console.log("INSERT STATUS:", insertRes.status);
+console.log("INSERT DATA:", insertData);
+console.log("PAYLOAD:", { question_id, choice, email, voter_hash, flow });
 
     if (!insertRes.ok) {
       // With unique index (question_id, voter_hash) a double vote should be 409,
