@@ -267,20 +267,20 @@ export default function MicroPoll() {
 
   const btnYes = {
     ...btnBase,
-    background: "linear-gradient(90deg, #1fb6ff, #2f62ff)",
+    background: "linear-gradient(90deg, #22c55e, #16a34a)",
   };
 
   const btnNo = {
     ...btnBase,
-    background: "linear-gradient(90deg, #ff2ea6, #ff7b3d)",
+    background: "linear-gradient(90deg, #ef4444, #dc2626)",
   };
 
   // ✅ Multi: 4 gradient “pieni” (stesso vibe di sì/no)
   const multiGradients = [
-    "linear-gradient(90deg, #1fb6ff, #2f62ff)", // blu
-    "linear-gradient(90deg, #ff2ea6, #ff7b3d)", // pink/orange
-    "linear-gradient(90deg, #22c55e, #16a34a)", // green
-    "linear-gradient(90deg, #a855f7, #6366f1)", // purple/indigo
+    "linear-gradient(90deg, #38bdf8, #0ea5e9)", // celeste
+    "linear-gradient(90deg, #2563eb, #1d4ed8)", // blu
+    "linear-gradient(90deg, #7c3aed, #6d28d9)", // viola
+    "linear-gradient(90deg, #c084fc, #a855f7)", // lilla
   ];
 
   const getMultiBtnStyle = (idx, isSelected) => {
