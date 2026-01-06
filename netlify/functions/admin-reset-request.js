@@ -221,7 +221,10 @@ exports.handler = async (event) => {
     const sig = signJwt(ADMIN_RESET_SECRET, signingInput);
     const token = `${signingInput}.${sig}`;
 
-    const confirmUrl = `${PUBLIC_BASE_URL}/admin/reset-confirm?token=${encodeURIComponent(token)}`;
+    // IMPORTANT: the confirm link must hit the Netlify Function endpoint (JSON/HTML response),
+    // not a client-side route. We route functions under /api/* in netlify.toml.
+    const base = PUBLIC_BASE_URL.replace(/\/+$/, "");
+    const confirmUrl = `${base}/api/admin-reset-confirm?token=${encodeURIComponent(token)}`;
 
     // email HTML minimale (poi la renderizzi come vuoi tu)
     const subject = "Conferma reset risposte (Vocal T World)";
