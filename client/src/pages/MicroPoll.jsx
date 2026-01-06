@@ -6,6 +6,19 @@ const DEFAULT_Q =
 export default function MicroPoll() {
   const [status, setStatus] = useState("idle"); // idle | saving | saved | already | error
   const [err, setErr] = useState("");
+  const [booting, setBooting] = useState(() => {
+    // evita flash: se arriviamo da link email (token oppure question_id/email) mostriamo subito la view “Sto aprendo…”
+    try {
+      if (typeof window === "undefined") return false;
+      const u = new URL(window.location.href);
+      const hasToken = Boolean(u.searchParams.get("token"));
+      const hasQid = Boolean(u.searchParams.get("question_id") || u.searchParams.get("qid"));
+      const hasEmail = Boolean(u.searchParams.get("email"));
+      return hasToken || (hasQid && hasEmail);
+    } catch {
+      return false;
+    }
+  }); // evita flash mentre genero token o carico meta
 
   const url = typeof window !== "undefined" ? window.location.href : "";
 
@@ -113,7 +126,16 @@ export default function MicroPoll() {
 
       const qid = (u.searchParams.get("question_id") || "").trim();
       const email = (u.searchParams.get("email") || "").trim();
-      if (!qid || !email) return;
+      if (!qid || !email) {
+        // se manca qualcosa, non proviamo a generare token
+        setBooting(false);
+        return;
+      }
+
+      // Evita flash della UI default mentre generiamo token/meta
+      setBooting(true);
+      setErr("");
+      setStatus("idle");
 
       const f = String(u.searchParams.get("flow") || "").trim().toLowerCase();
       const m = String(
@@ -151,8 +173,9 @@ export default function MicroPoll() {
         }
         if (data.flow) setFlow(String(data.flow));
         if (data.mode) setMode(String(data.mode));
+        setBooting(false);
       } catch (e) {
-        if (!cancelled) {
+        if (!cancelled) {setBooting(false);
           setStatus("error");
           setErr(e?.message || "Errore nel caricamento del micro-sondaggio");
         }
@@ -172,6 +195,8 @@ export default function MicroPoll() {
     const fetchMeta = async () => {
       const t = String(effectiveToken || "").trim();
       if (!t) return;
+      if (status === "saved" || status === "already") return;
+      setBooting(true);
 
       try {
         const qs = new URLSearchParams();
@@ -194,8 +219,10 @@ export default function MicroPoll() {
 
         if (data.flow) setFlow(String(data.flow));
         if (data.mode) setMode(String(data.mode));
+        setBooting(false);
       } catch (e) {
         if (!cancelled) {
+          setBooting(false);
           setStatus((s) => (s === "idle" ? "error" : s));
           setErr(e?.message || "Errore lettura dati sondaggio");
         }
@@ -318,7 +345,7 @@ export default function MicroPoll() {
           style={{ maxWidth: 140, display: "block", margin: "0 auto 14px auto" }}
         />
 
-        {/* ✅ DONE VIEW (solo conferma / già votato) */}
+        {/* ✅ DONE / BOOTING / NORMAL */}
         {isDone ? (
           <div style={styles.doneCenter}>
             {status === "saved" ? (
@@ -338,6 +365,22 @@ export default function MicroPoll() {
                 </div>
               </div>
             )}
+          </div>
+        ) : booting ? (
+          <div style={styles.doneCenter}>
+            <div style={styles.resultWrap}>
+              <div
+                style={{
+                  ...styles.infoCircle,
+                  borderColor: "rgba(120,180,255,0.35)",
+                  color: "rgba(255,255,255,0.65)",
+                }}
+              >
+                …
+              </div>
+              <div style={styles.resultTitle}>Sto aprendo il sondaggio…</div>
+              <div style={styles.resultSub}>Un secondo e ci sei.</div>
+            </div>
           </div>
         ) : (
           <>
