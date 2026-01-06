@@ -1,11 +1,9 @@
 const crypto = require("crypto");
 
 const SUPABASE_URL = String(process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL || "").trim();
+// IMPORTANT: this function MUST use the Service Role key (never anon)
 const SUPABASE_SERVICE_KEY = String(
-  process.env.SUPABASE_SERVICE_ROLE_KEY ||
-    process.env.SUPABASE_SERVICE_KEY ||
-    process.env.SUPABASE_ANON_KEY ||
-    ""
+  process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_SERVICE_KEY || ""
 ).trim();
 
 const ADMIN_RESET_SECRET = String(process.env.ADMIN_RESET_SECRET || "").trim();
@@ -68,6 +66,83 @@ function json(statusCode, body) {
     headers: { "Content-Type": "application/json", "Cache-Control": "no-store" },
     body: JSON.stringify(body),
   };
+}
+
+function html(statusCode, htmlBody) {
+  return {
+    statusCode,
+    headers: {
+      "Content-Type": "text/html; charset=utf-8",
+      "Cache-Control": "no-store",
+    },
+    body: String(htmlBody || ""),
+  };
+}
+
+function wantsHtml(event) {
+  const accept = String((event.headers && (event.headers.accept || event.headers.Accept)) || "").toLowerCase();
+  return accept.includes("text/html");
+}
+
+async function supabaseCountAll(table) {
+  // Use PostgREST count via Content-Range
+  const url = `${SUPABASE_URL}/rest/v1/${table}?select=id&limit=1`;
+  const res = await fetch(url, {
+    method: "GET",
+    headers: {
+      apikey: SUPABASE_SERVICE_KEY,
+      Authorization: `Bearer ${SUPABASE_SERVICE_KEY}`,
+      "Content-Type": "application/json",
+      Prefer: "count=exact",
+    },
+  });
+  const text = await res.text();
+  if (!res.ok) throw new Error(`Supabase count error ${res.status}: ${text}`);
+  const cr = res.headers.get("content-range") || res.headers.get("Content-Range") || "";
+  // format is like: "0-0/123" or "*/0"
+  const m = cr.match(/\/(\d+)\s*$/);
+  return m ? Number(m[1]) : null;
+}
+
+function renderResultPage({ ok, title, message }) {
+  const statusColor = ok ? "#8affc1" : "#ff6b6b";
+  const border = ok ? "rgba(0,255,170,0.25)" : "rgba(255,90,90,0.25)";
+  return `<!doctype html>
+<html lang="it">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>${String(title || "Admin Reset")}</title>
+  <style>
+    body{margin:0;background:#0b0f14;color:#d1f7ff;font-family:Menlo,Consolas,Monaco,'Courier New',monospace;}
+    .wrap{min-height:100vh;display:flex;align-items:center;justify-content:center;padding:24px;}
+    .card{max-width:720px;width:100%;background:#020409;border-radius:14px;box-shadow:0 0 0 1px ${border}, 0 20px 60px rgba(0,0,0,.6);overflow:hidden;}
+    .head{padding:16px 20px;background:#050a10;border-bottom:1px solid rgba(0,255,255,0.15);}
+    .cmd{color:#00eaff;font-size:13px;}
+    .cmd b{color:${statusColor};}
+    .body{padding:22px 20px 24px 20px;}
+    .badge{display:inline-block;padding:6px 10px;border-radius:10px;background:rgba(0,234,255,0.08);border:1px solid rgba(0,234,255,0.18);font-size:12px;}
+    .title{margin:14px 0 8px 0;font-size:18px;color:${statusColor};}
+    .msg{margin:0;line-height:1.6;color:#bfefff;}
+    .hint{margin-top:16px;font-size:12px;color:#7aa3b0;line-height:1.5;}
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <div class="card">
+      <div class="head">
+        <div class="cmd">vocaltworld@system:~$ <b>${ok ? "reset --executed" : "reset --failed"}</b></div>
+      </div>
+      <div class="body">
+        <span class="badge">Admin Reset · Vocal T World</span>
+        <div class="title">${String(title || "")}</div>
+        <p class="msg">${String(message || "")}</p>
+        <div class="hint">Ora torna alla dashboard admin e premi <b>Aggiorna</b> per ricaricare i conteggi.</div>
+      </div>
+    </div>
+  </div>
+</body>
+</html>`;
 }
 
 function base64urlToString(b64url) {
@@ -161,17 +236,51 @@ exports.handler = async (event) => {
 
     // 2) ✅ delete SOLO risposte (no token logs)
     // PostgREST richiede un filtro per DELETE. Usiamo created_at=not.is.null per eliminare tutte le righe.
+    const beforeSurvey = await supabaseCountAll(SURVEY_SUBMISSIONS_TABLE);
+    const beforeMicro = await supabaseCountAll(MICRO_POLL_RESPONSES_TABLE);
+
     await supabaseDelete(`/rest/v1/${SURVEY_SUBMISSIONS_TABLE}?created_at=not.is.null`);
     await supabaseDelete(`/rest/v1/${MICRO_POLL_RESPONSES_TABLE}?created_at=not.is.null`);
+
+    const afterSurvey = await supabaseCountAll(SURVEY_SUBMISSIONS_TABLE);
+    const afterMicro = await supabaseCountAll(MICRO_POLL_RESPONSES_TABLE);
 
     // 3) marca executed
     await supabasePatch(`/rest/v1/admin_reset_requests?token_id=eq.${encodeURIComponent(token_id)}`, {
       status: "executed",
       executed_at: new Date().toISOString(),
+      meta: {
+        before: { survey_submissions: beforeSurvey, micro_poll_responses: beforeMicro },
+        after: { survey_submissions: afterSurvey, micro_poll_responses: afterMicro },
+      },
     });
 
-    return json(200, { ok: true, message: "Responses reset completed" });
+    const payloadOk = {
+      ok: true,
+      message: "Responses reset completed",
+      before: { survey_submissions: beforeSurvey, micro_poll_responses: beforeMicro },
+      after: { survey_submissions: afterSurvey, micro_poll_responses: afterMicro },
+    };
+
+    if (wantsHtml(event)) {
+      return html(200, renderResultPage({
+        ok: true,
+        title: "Reset completato ✅",
+        message: `Risposte eliminate. Prima: survey=${beforeSurvey ?? "?"}, micro=${beforeMicro ?? "?"}. Dopo: survey=${afterSurvey ?? "?"}, micro=${afterMicro ?? "?"}.`,
+      }));
+    }
+
+    return json(200, payloadOk);
   } catch (err) {
-    return json(500, { ok: false, error: "Internal error", message: err?.message || String(err) });
+    const msg = err?.message || String(err);
+    const payloadErr = { ok: false, error: "Internal error", message: msg };
+    if (wantsHtml(event)) {
+      return html(500, renderResultPage({
+        ok: false,
+        title: "Reset fallito ❌",
+        message: msg,
+      }));
+    }
+    return json(500, payloadErr);
   }
 };
