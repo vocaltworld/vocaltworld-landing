@@ -162,10 +162,25 @@ exports.handler = async (event) => {
     try { payload = event.body ? JSON.parse(event.body) : {}; } catch { payload = {}; }
 
     // hard gate: una admin key (semplice ma efficace)
-    const adminKey = String(payload.admin_key || "").trim();
-    const expectedKey = String(process.env.ADMIN_DASH_KEY || "").trim();
-    if (!expectedKey) return json(500, { ok: false, error: "Missing ADMIN_DASH_KEY" }, headers);
-    if (!adminKey || adminKey !== expectedKey) return json(401, { ok: false, error: "Unauthorized" }, headers);
+    // Accettiamo sia `admin_key` che `adminKey` dal client.
+    const adminKey = String(payload.admin_key || payload.adminKey || "").trim();
+
+    // Su Netlify hai sia ADMIN_DASH_KEY che ADMIN_KEY: usiamo il primo disponibile.
+    const expectedKey = String(
+      process.env.ADMIN_DASH_KEY || process.env.ADMIN_KEY || ""
+    ).trim();
+
+    if (!expectedKey) {
+      return json(
+        500,
+        { ok: false, error: "Missing ADMIN_DASH_KEY (or ADMIN_KEY)" },
+        headers
+      );
+    }
+
+    if (!adminKey || adminKey !== expectedKey) {
+      return json(401, { ok: false, error: "Unauthorized" }, headers);
+    }
 
     // crea token id + scadenza breve
     const token_id = crypto.randomBytes(16).toString("hex");
@@ -179,7 +194,14 @@ exports.handler = async (event) => {
       status: "pending",
       expires_at,
       requested_by: ADMIN_RESET_EMAIL,
-      request_ip: String(event.headers?.["x-forwarded-for"] || event.headers?.["client-ip"] || "").split(",")[0].trim(),
+      request_ip: String(
+        event.headers?.["x-nf-client-connection-ip"] ||
+          event.headers?.["x-forwarded-for"] ||
+          event.headers?.["client-ip"] ||
+          ""
+      )
+        .split(",")[0]
+        .trim(),
     }]);
 
     // crea JWT (one-time verrà garantito dalla tabella)
