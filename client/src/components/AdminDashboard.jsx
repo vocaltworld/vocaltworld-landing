@@ -1028,14 +1028,40 @@ function microChoiceToLabel(choice, q) {
       }
 
       if (!res.ok || !data?.ok) {
-        // mostriamo anche lo status per capire subito 500/404 ecc.
-        const msg = data?.error || data?.message || "Errore invio email reset";
-        throw new Error(`${msg} (HTTP ${res.status})`);
+        // Mostriamo il massimo dettaglio possibile senza rompere nulla.
+        const msg =
+          data?.error ||
+          data?.message ||
+          data?.detail ||
+          data?.details ||
+          data?.hint ||
+          "Errore invio email reset";
+
+        // Log diagnostico (solo console) per vedere payload completo in Netlify/Browser.
+        // Non mostra segreti: adminKey non viene stampata.
+        try {
+          console.error("admin-reset-request failed", {
+            httpStatus: res.status,
+            ok: data?.ok,
+            error: data?.error,
+            details: data?.details,
+            hint: data?.hint,
+          });
+        } catch {}
+
+        // Se è un 500, aggiungiamo un hint pratico per trovare il log della Function.
+        const extra =
+          res.status >= 500
+            ? " • (Controlla i log Netlify: Functions → admin-reset-request)"
+            : "";
+
+        throw new Error(`${msg}${extra} (HTTP ${res.status})`);
       }
 
       setResetOk(
         `Email inviata a ${RESET_CONFIRM_EMAIL}. Apri la mail e clicca su "Conferma reset" per svuotare le risposte.`
       );
+      console.log("admin-reset-request ok", { sentTo: RESET_CONFIRM_EMAIL });
     } catch (e) {
       setResetErr(e?.message || "Errore inatteso");
     } finally {
