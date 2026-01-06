@@ -255,15 +255,23 @@ exports.handler = async (event) => {
     const afterSurvey = await supabaseCountAll(SURVEY_SUBMISSIONS_TABLE);
     const afterMicro = await supabaseCountAll(MICRO_POLL_RESPONSES_TABLE);
 
-    // 3) marca executed
-    await supabasePatch(`/rest/v1/admin_reset_requests?token_id=eq.${encodeURIComponent(token_id)}`, {
-      status: "executed",
-      executed_at: new Date().toISOString(),
-      meta: {
-        before: { survey_submissions: beforeSurvey, micro_poll_responses: beforeMicro },
-        after: { survey_submissions: afterSurvey, micro_poll_responses: afterMicro },
-      },
-    });
+    // 3) marca executed (senza dipendere dalla colonna `meta` che potrebbe non esistere)
+    try {
+      await supabasePatch(`/rest/v1/admin_reset_requests?token_id=eq.${encodeURIComponent(token_id)}`, {
+        status: "executed",
+        executed_at: new Date().toISOString(),
+        meta: {
+          before: { survey_submissions: beforeSurvey, micro_poll_responses: beforeMicro },
+          after: { survey_submissions: afterSurvey, micro_poll_responses: afterMicro },
+        },
+      });
+    } catch (e) {
+      // Fallback: se la colonna `meta` non esiste (PGRST204), aggiorniamo solo status/executed_at
+      await supabasePatch(`/rest/v1/admin_reset_requests?token_id=eq.${encodeURIComponent(token_id)}`, {
+        status: "executed",
+        executed_at: new Date().toISOString(),
+      });
+    }
 
     const payloadOk = {
       ok: true,
