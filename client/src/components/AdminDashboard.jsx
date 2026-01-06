@@ -1012,7 +1012,7 @@ function microChoiceToLabel(choice, q) {
       const { res, data } = await fetchJsonWithFallback("/api/admin-reset-request", {
         method: "POST",
         body: {
-          secret: adminKey || "",
+          admin_key: adminKey || "",
           email: RESET_CONFIRM_EMAIL,
         },
       });
