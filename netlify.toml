@@ -32,6 +32,13 @@ to = "/.netlify/functions/micro-poll-link"
 status = 200
 force = true
 
+# ✅ Admin reset confirm (link email → function)
+[[redirects]]
+from = "/admin/reset-confirm"
+to = "/.netlify/functions/admin-reset-confirm"
+status = 200
+force = true
+
 # Fallback: qualunque altra /api/<nome> va alla function corrispondente
 [[redirects]]
 from = "/api/*"
