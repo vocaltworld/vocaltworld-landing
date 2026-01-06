@@ -12,7 +12,12 @@ const ADMIN_RESET_EMAIL = String(process.env.ADMIN_RESET_EMAIL || "resetdatabase
 const ADMIN_RESET_SECRET = String(process.env.ADMIN_RESET_SECRET || "").trim();
 const PUBLIC_BASE_URL = String(process.env.PUBLIC_BASE_URL || "https://survey.vocaltworld.com").trim();
 
-const KLAVIYO_PRIVATE_API_KEY = String(process.env.KLAVIYO_PRIVATE_API_KEY || process.env.KLAVIYO_API_KEY || "").trim();
+const KLAVIYO_PRIVATE_API_KEY = String(
+  process.env.KLAVIYO_PRIVATE_API_KEY ||
+    process.env.KLAVIYO_PRIVATE_KEY ||
+    process.env.KLAVIYO_API_KEY ||
+    ""
+).trim();
 const KLAVIYO_REVISION = String(process.env.KLAVIYO_REVISION || "2023-10-15").trim();
 const KLAVIYO_METRIC_NAME = String(process.env.KLAVIYO_ADMIN_RESET_METRIC || "Admin Reset Confirmation").trim();
 
@@ -21,7 +26,7 @@ const KLAVIYO_METRIC_NAME = String(process.env.KLAVIYO_ADMIN_RESET_METRIC || "Ad
 // Nel template usa `{{ event.properties.confirm_url }}` come link.
 async function sendEmail({ to, subject, html, confirmUrl }) {
   if (!KLAVIYO_PRIVATE_API_KEY) {
-    throw new Error("Missing KLAVIYO_PRIVATE_API_KEY (or KLAVIYO_API_KEY)");
+    throw new Error("Missing KLAVIYO_PRIVATE_KEY (or KLAVIYO_PRIVATE_API_KEY / KLAVIYO_API_KEY)");
   }
 
   const payload = {
