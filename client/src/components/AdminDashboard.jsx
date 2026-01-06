@@ -1008,10 +1008,16 @@ function microChoiceToLabel(choice, q) {
 
     try {
       setResetBusy(true);
+      // Guard: non chiamare senza adminKey
+      if (!String(adminKey || "").trim()) {
+        throw new Error("Codice segreto mancante.");
+      }
 
       const { res, data } = await fetchJsonWithFallback("/api/admin-reset-request", {
         method: "POST",
         body: {
+          // compat: alcune versioni delle functions si aspettano `secret`, altre `admin_key`
+          secret: adminKey || "",
           admin_key: adminKey || "",
           email: RESET_CONFIRM_EMAIL,
         },
@@ -1022,7 +1028,9 @@ function microChoiceToLabel(choice, q) {
       }
 
       if (!res.ok || !data?.ok) {
-        throw new Error(data?.error || "Errore invio email reset");
+        // mostriamo anche lo status per capire subito 500/404 ecc.
+        const msg = data?.error || data?.message || "Errore invio email reset";
+        throw new Error(`${msg} (HTTP ${res.status})`);
       }
 
       setResetOk(
