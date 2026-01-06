@@ -310,6 +310,16 @@ function microRowKey(r) {
   const [exportMicroSpeaker, setExportMicroSpeaker] = useState(true);
   const [exportMicroListener, setExportMicroListener] = useState(true);
 
+  // ---------------------------
+  // ✅ RESET RISPOSTE (solo dati di test) – 2 step (UI confirm + email confirm)
+  // ---------------------------
+  const RESET_CONFIRM_EMAIL = "resetdatabasevocaltworld@gmail.com";
+  const [isResetOpen, setIsResetOpen] = useState(false);
+  const [resetBusy, setResetBusy] = useState(false);
+  const [resetErr, setResetErr] = useState("");
+  const [resetOk, setResetOk] = useState("");
+  const [resetTyped, setResetTyped] = useState("");
+
   function pad2(n) {
     return String(n).padStart(2, "0");
   }
@@ -981,6 +991,66 @@ function microChoiceToLabel(choice, q) {
     return { res, data };
   }
 
+  async function requestResetResponses() {
+    setResetErr("");
+    setResetOk("");
+
+    // doppia sicurezza UI
+    const first = window.confirm(
+      "Sei DAVVERO sicuro? Questa azione elimina SOLO le RISPOSTE (sondaggio principale + micro-polls)."
+    );
+    if (!first) return;
+
+    const second = window.confirm(
+      "Ultima conferma: dopo questo step riceverai una mail di conferma. Procedo a inviare la mail?"
+    );
+    if (!second) return;
+
+    try {
+      setResetBusy(true);
+
+      const { res, data } = await fetchJsonWithFallback("/api/admin-reset-responses", {
+        method: "POST",
+        body: {
+          secret: adminKey || "",
+          email: RESET_CONFIRM_EMAIL,
+        },
+      });
+
+      if (res.status === 401) {
+        throw new Error("Codice segreto non valido.");
+      }
+
+      if (!res.ok || !data?.ok) {
+        throw new Error(data?.error || "Errore invio email reset");
+      }
+
+      setResetOk(
+        `Email inviata a ${RESET_CONFIRM_EMAIL}. Apri la mail e clicca su "Conferma reset" per svuotare le risposte.`
+      );
+    } catch (e) {
+      setResetErr(e?.message || "Errore inatteso");
+    } finally {
+      setResetBusy(false);
+    }
+  }
+
+  async function refreshAfterReset() {
+    // dopo che hai cliccato il link nella mail
+    setResetErr("");
+    setResetOk("");
+    try {
+      setResetBusy(true);
+      await fetchDashboardData({ silent: false });
+      if (microSelectedId) await fetchMicroResults(microSelectedId, { silent: false });
+      setResetOk("Se hai confermato via email, i dati ora dovrebbero essere vuoti ✅");
+    } catch (e) {
+      setResetErr(e?.message || "Errore refresh");
+    } finally {
+      setResetBusy(false);
+    }
+  }
+
   async function fetchMicroQuestions() {
     try {
       setMicroError("");
@@ -1430,6 +1500,24 @@ const onVisibility = () => {
         </div>
 
         <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
+          <button
+            type="button"
+            className="admin-logout-btn"
+            onClick={() => {
+              setIsResetOpen(true);
+              setResetErr("");
+              setResetOk("");
+              setResetTyped("");
+            }}
+            style={{
+              opacity: 0.95,
+              background: "rgba(239, 68, 68, 0.14)",
+              border: "1px solid rgba(239, 68, 68, 0.32)",
+            }}
+            title="Reset risposte (solo dopo i test)"
+          >
+            🗑 Reset risposte
+          </button>
           {(newItems > 0 || isSyncing) && (
             <div
               className={"admin-sync-badge " + (isSyncing ? "syncing" : "ready")}
@@ -1618,6 +1706,118 @@ const onVisibility = () => {
                   }}
                 >
                   Scarica
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {isResetOpen && (
+        <div
+          style={{
+            position: "fixed",
+            inset: 0,
+            background: "rgba(0,0,0,0.62)",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            zIndex: 10000,
+            padding: 18,
+          }}
+          onClick={() => setIsResetOpen(false)}
+        >
+          <div
+            style={{
+              width: "min(640px, 96vw)",
+              borderRadius: 18,
+              border: "1px solid rgba(255,255,255,0.14)",
+              background: "rgba(10, 10, 14, 0.92)",
+              boxShadow: "0 20px 80px rgba(0,0,0,0.55)",
+              padding: 18,
+            }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12 }}>
+              <div>
+                <div style={{ fontSize: 16, fontWeight: 900 }}>Reset risposte (2 step)</div>
+                <div style={{ fontSize: 12, opacity: 0.75, marginTop: 4 }}>
+                  Elimina <strong>solo le risposte</strong> (sondaggio principale + micro-polls). Non tocca log/token.
+                </div>
+              </div>
+
+              <button type="button" className="admin-logout-btn" onClick={() => setIsResetOpen(false)}>
+                Chiudi
+              </button>
+            </div>
+
+            <div style={{ marginTop: 14, display: "grid", gap: 10 }}>
+              <div
+                style={{
+                  padding: 12,
+                  borderRadius: 14,
+                  border: "1px solid rgba(255,255,255,0.12)",
+                  background: "rgba(0,0,0,0.35)",
+                }}
+              >
+                <div style={{ fontWeight: 800 }}>Sicurezza</div>
+                <div style={{ fontSize: 12, opacity: 0.8, marginTop: 6, lineHeight: 1.5 }}>
+                  1) Conferma UI (2 popup) • 2) Ti mando una mail a <strong>{RESET_CONFIRM_EMAIL}</strong>.
+                  Il reset parte <strong>solo</strong> dopo che clicchi “Conferma reset” nella mail.
+                </div>
+              </div>
+
+              <label style={{ display: "grid", gap: 6 }}>
+                <div style={{ fontSize: 12, opacity: 0.85 }}>
+                  Scrivi <strong>RESET</strong> qui sotto (anti-click accidentale)
+                </div>
+                <input
+                  value={resetTyped}
+                  onChange={(e) => setResetTyped(e.target.value)}
+                  placeholder="RESET"
+                  style={{
+                    padding: "10px 12px",
+                    borderRadius: 12,
+                    border: "1px solid rgba(255,255,255,0.14)",
+                    background: "rgba(0,0,0,0.35)",
+                    color: "#fff",
+                    outline: "none",
+                  }}
+                />
+              </label>
+
+              {(resetErr || resetOk) && (
+                <div style={{ fontSize: 12, lineHeight: 1.5 }}>
+                  {resetErr && <div style={{ color: "#ff7b7b" }}>Errore: {resetErr}</div>}
+                  {resetOk && <div style={{ color: "rgba(255,255,255,0.88)" }}>{resetOk}</div>}
+                </div>
+              )}
+
+              <div style={{ display: "flex", gap: 10, justifyContent: "flex-end", marginTop: 6 }}>
+                <button
+                  type="button"
+                  className="admin-logout-btn"
+                  onClick={refreshAfterReset}
+                  disabled={resetBusy}
+                  style={{ opacity: resetBusy ? 0.6 : 1 }}
+                  title="Dopo aver cliccato il link di conferma nella mail, aggiorna i dati"
+                >
+                  ↻ Ho confermato via email
+                </button>
+
+                <button
+                  type="button"
+                  className="admin-logout-btn"
+                  onClick={requestResetResponses}
+                  disabled={resetBusy || String(resetTyped).trim().toUpperCase() !== "RESET"}
+                  style={{
+                    opacity:
+                      resetBusy || String(resetTyped).trim().toUpperCase() !== "RESET" ? 0.5 : 1,
+                    background: "rgba(239, 68, 68, 0.18)",
+                    border: "1px solid rgba(239, 68, 68, 0.38)",
+                  }}
+                >
+                  {resetBusy ? "Invio…" : "Invia email di reset"}
                 </button>
               </div>
             </div>
