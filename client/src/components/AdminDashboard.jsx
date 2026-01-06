@@ -1009,7 +1009,7 @@ function microChoiceToLabel(choice, q) {
     try {
       setResetBusy(true);
 
-      const { res, data } = await fetchJsonWithFallback("/api/admin-reset-responses", {
+      const { res, data } = await fetchJsonWithFallback("/api/admin-reset-request", {
         method: "POST",
         body: {
           secret: adminKey || "",
