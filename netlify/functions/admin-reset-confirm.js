@@ -81,6 +81,15 @@ function html(statusCode, htmlBody) {
 
 function wantsHtml(event) {
   const accept = String((event.headers && (event.headers.accept || event.headers.Accept)) || "").toLowerCase();
+  const qs = event.queryStringParameters || {};
+  const format = String(qs.format || "").toLowerCase();
+  // Force HTML if explicitly requested
+  if (format === "html") return true;
+  // Force JSON if explicitly requested
+  if (format === "json") return false;
+  // Many email clients/browsers send */* or nothing; default to HTML unless JSON is explicitly preferred
+  if (!accept || accept.includes("*/*")) return true;
+  if (accept.includes("application/json")) return false;
   return accept.includes("text/html");
 }
 
@@ -235,12 +244,13 @@ exports.handler = async (event) => {
     }
 
     // 2) ✅ delete SOLO risposte (no token logs)
-    // PostgREST richiede un filtro per DELETE. Usiamo created_at=not.is.null per eliminare tutte le righe.
+    // PostgREST richiede un filtro per DELETE. Usiamo `id=not.is.null` (funziona anche con UUID)
+    // così non dipendiamo dal nome della colonna timestamp.
     const beforeSurvey = await supabaseCountAll(SURVEY_SUBMISSIONS_TABLE);
     const beforeMicro = await supabaseCountAll(MICRO_POLL_RESPONSES_TABLE);
 
-    await supabaseDelete(`/rest/v1/${SURVEY_SUBMISSIONS_TABLE}?created_at=not.is.null`);
-    await supabaseDelete(`/rest/v1/${MICRO_POLL_RESPONSES_TABLE}?created_at=not.is.null`);
+    await supabaseDelete(`/rest/v1/${SURVEY_SUBMISSIONS_TABLE}?id=not.is.null`);
+    await supabaseDelete(`/rest/v1/${MICRO_POLL_RESPONSES_TABLE}?id=not.is.null`);
 
     const afterSurvey = await supabaseCountAll(SURVEY_SUBMISSIONS_TABLE);
     const afterMicro = await supabaseCountAll(MICRO_POLL_RESPONSES_TABLE);
@@ -258,6 +268,7 @@ exports.handler = async (event) => {
     const payloadOk = {
       ok: true,
       message: "Responses reset completed",
+      token_id,
       before: { survey_submissions: beforeSurvey, micro_poll_responses: beforeMicro },
       after: { survey_submissions: afterSurvey, micro_poll_responses: afterMicro },
     };
@@ -266,7 +277,7 @@ exports.handler = async (event) => {
       return html(200, renderResultPage({
         ok: true,
         title: "Reset completato ✅",
-        message: `Risposte eliminate. Prima: survey=${beforeSurvey ?? "?"}, micro=${beforeMicro ?? "?"}. Dopo: survey=${afterSurvey ?? "?"}, micro=${afterMicro ?? "?"}.`,
+        message: `Risposte eliminate. Prima: survey=${beforeSurvey ?? "?"}, micro=${beforeMicro ?? "?"}. Dopo: survey=${afterSurvey ?? "?"}, micro=${afterMicro ?? "?"}.<br/><br/>Se i numeri non vanno a 0, allora il link sta chiamando la funzione giusta ma il DELETE è stato bloccato (permessi/env). In quel caso controlla i log Netlify della function <b>admin-reset-confirm</b>.`,
       }));
     }
 
