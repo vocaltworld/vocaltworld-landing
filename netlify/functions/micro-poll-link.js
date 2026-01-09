@@ -42,9 +42,22 @@ async function loadMicroQuestion(questionId) {
   const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
   if (!UUID_RE.test(qid)) return null;
 
-  const rows = await supabaseGet(
+  // 1) Try by primary key column `id`
+  let rows = await supabaseGet(
     `/rest/v1/micro_questions?select=id,question,kind,options,flow,active,created_at&id=eq.${qid}&limit=1`
   );
+
+  // 2) Fallback: some schemas may use `uuid` as the identifier column
+  if (!Array.isArray(rows) || !rows.length) {
+    try {
+      rows = await supabaseGet(
+        `/rest/v1/micro_questions?select=id,question,kind,options,flow,active,created_at&uuid=eq.${qid}&limit=1`
+      );
+    } catch {
+      // If the column doesn't exist, ignore and let the not-found path handle it
+      rows = rows || [];
+    }
+  }
 
   if (!Array.isArray(rows) || !rows.length) return null;
 
@@ -133,6 +146,7 @@ function normalizeFlowOptional(v) {
   if (s === "listener" || s === "pioneer" || s === "speaker") return s;
   return "";
 }
+
 function corsHeaders(origin) {
   // In produzione lascia passare solo i tuoi domini (e localhost per dev)
   const allowlist = new Set([
@@ -147,7 +161,7 @@ function corsHeaders(origin) {
 
   return {
     "Access-Control-Allow-Origin": allowedOrigin,
-    "Vary": "Origin",
+    Vary: "Origin",
     "Access-Control-Allow-Headers": "Content-Type",
     "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
   };
