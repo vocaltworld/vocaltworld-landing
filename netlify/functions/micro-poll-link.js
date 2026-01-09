@@ -37,11 +37,13 @@ async function loadMicroQuestion(questionId) {
   // ✅ Tabella: public.micro_questions
   const qid = String(questionId || "").trim();
   if (!qid) return null;
-  // Colonne attese: id, question, kind ('binary'|'multi'), options (text[]), flow, active, created_at
+  // PostgREST filter `id=eq.<uuid>` should receive the raw UUID (no encodeURIComponent),
+  // otherwise some edge cases can lead to empty results.
+  const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+  if (!UUID_RE.test(qid)) return null;
+
   const rows = await supabaseGet(
-    `/rest/v1/micro_questions?select=id,question,kind,options,flow,active,created_at&id=eq.${encodeURIComponent(
-      qid
-    )}&limit=1`
+    `/rest/v1/micro_questions?select=id,question,kind,options,flow,active,created_at&id=eq.${qid}&limit=1`
   );
 
   if (!Array.isArray(rows) || !rows.length) return null;
