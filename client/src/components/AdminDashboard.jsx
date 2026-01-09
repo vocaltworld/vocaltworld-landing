@@ -309,6 +309,8 @@ function microRowKey(r) {
   // Micro-polls export separati (Speaker / Listener)
   const [exportMicroSpeaker, setExportMicroSpeaker] = useState(true);
   const [exportMicroListener, setExportMicroListener] = useState(true);
+  // Micro-polls export separati (Pioneer)
+  const [exportMicroPioneer, setExportMicroPioneer] = useState(true);
 
   // ---------------------------
   // ✅ RESET RISPOSTE (solo dati di test) – 2 step (UI confirm + email confirm)
@@ -567,6 +569,22 @@ function microChoiceToLabel(choice, q) {
           });
           const qIdShort = qid.slice(0, 6);
           downloadTextFile(`vocaltworld_micro_poll_listener_${qIdShort}_${stamp}.csv`, csv);
+        }
+      }
+
+      // Export PIONEER
+      if (exportMicroPioneer) {
+        const pioneerQ = findQuestionByFlow("pioneer");
+        const qid = String(pioneerQ?.id || "");
+        if (qid) {
+          const { rows, stats } = await fetchMicroExport(qid);
+          const csv = buildMicroPollCsv({
+            question: pioneerQ,
+            rows,
+            stats,
+          });
+          const qIdShort = qid.slice(0, 6);
+          downloadTextFile(`vocaltworld_micro_poll_pioneer_${qIdShort}_${stamp}.csv`, csv);
         }
       }
 
@@ -1714,6 +1732,18 @@ const onVisibility = () => {
                 </div>
               </label>
 
+              <label style={{ display: "flex", gap: 10, alignItems: "center" }}>
+                <input
+                  type="checkbox"
+                  checked={exportMicroPioneer}
+                  onChange={(e) => setExportMicroPioneer(e.target.checked)}
+                />
+                <div>
+                  <div style={{ fontWeight: 800 }}>Micro-poll (Email 3 — Pioneer)</div>
+                  <div style={{ fontSize: 12, opacity: 0.75 }}>4 opzioni + elenco risposte (file separato)</div>
+                </div>
+              </label>
+
               <div style={{ display: "flex", gap: 10, justifyContent: "flex-end", marginTop: 8 }}>
                 <button
                   type="button"
@@ -1722,6 +1752,7 @@ const onVisibility = () => {
                     setExportMain(true);
                     setExportMicroSpeaker(true);
                     setExportMicroListener(true);
+                    setExportMicroPioneer(true);
                   }}
                   style={{ opacity: 0.9 }}
                 >
@@ -1732,9 +1763,9 @@ const onVisibility = () => {
                   type="button"
                   className="admin-logout-btn"
                   onClick={doExport}
-                  disabled={!exportMain && !exportMicroSpeaker && !exportMicroListener}
+                  disabled={!exportMain && !exportMicroSpeaker && !exportMicroListener && !exportMicroPioneer}
                   style={{
-                    opacity: !exportMain && !exportMicroSpeaker && !exportMicroListener ? 0.5 : 1,
+                    opacity: !exportMain && !exportMicroSpeaker && !exportMicroListener && !exportMicroPioneer ? 0.5 : 1,
                     background: "rgba(34, 197, 94, 0.18)",
                     border: "1px solid rgba(34, 197, 94, 0.35)",
                   }}
