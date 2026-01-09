@@ -2,16 +2,13 @@ const crypto = require("crypto");
 
 // Node 18+ has global fetch. We use it to read the micro-question from Supabase.
 const SUPABASE_URL = String(process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL || "").trim();
-const SUPABASE_SERVICE_KEY = String(
-  process.env.SUPABASE_SERVICE_ROLE_KEY ||
-    process.env.SUPABASE_SERVICE_KEY ||
-    process.env.SUPABASE_ANON_KEY ||
-    ""
-).trim();
+// IMPORTANT: this Netlify Function must use the Service Role key (server-side) so it can read micro_questions
+// even if RLS is enabled. Do NOT fall back to anon keys here.
+const SUPABASE_SERVICE_KEY = String(process.env.SUPABASE_SERVICE_ROLE_KEY || "").trim();
 
 async function supabaseGet(path) {
   if (!SUPABASE_URL || !SUPABASE_SERVICE_KEY) {
-    throw new Error("Missing SUPABASE_URL or SUPABASE_SERVICE_ROLE_KEY");
+    throw new Error("Missing SUPABASE_URL or SUPABASE_SERVICE_ROLE_KEY (required for server-side micro-poll-link)");
   }
   const res = await fetch(`${SUPABASE_URL}${path}`, {
     headers: {
@@ -31,17 +28,19 @@ async function supabaseGet(path) {
 
   if (!res.ok) {
     const msg = typeof data === "string" ? data : JSON.stringify(data);
-    throw new Error(`Supabase error ${res.status}: ${msg}`);
+    throw new Error(`Supabase error ${res.status} on ${path}: ${msg}`);
   }
   return data;
 }
 
 async function loadMicroQuestion(questionId) {
   // ✅ Tabella: public.micro_questions
+  const qid = String(questionId || "").trim();
+  if (!qid) return null;
   // Colonne attese: id, question, kind ('binary'|'multi'), options (text[]), flow, active, created_at
   const rows = await supabaseGet(
     `/rest/v1/micro_questions?select=id,question,kind,options,flow,active,created_at&id=eq.${encodeURIComponent(
-      questionId
+      qid
     )}&limit=1`
   );
 
