@@ -127,6 +127,18 @@ function triggerHaptic(duration = 20) {
     console.warn("Vibration non disponibile o bloccata:", e);
   }
 }
+
+// Helper: invia eventi a Google Tag Manager (dataLayer) senza rompere il form_submit nativo.
+// Usiamo un evento custom così tracciamo SOLO completamenti reali.
+function pushDataLayer(eventName, params = {}) {
+  try {
+    if (typeof window === "undefined") return;
+    window.dataLayer = window.dataLayer || [];
+    window.dataLayer.push({ event: eventName, ...params });
+  } catch (e) {
+    console.warn("dataLayer push fallito:", e);
+  }
+}
 function StepIndicator({ currentStep }) {
   return (
     <div className="survey-step-wrapper">
@@ -406,6 +418,13 @@ if (errorCode === "already_submitted") {
       }
 
       // ✅ Successo
+      // ✅ Tracciamento: evento custom SOLO quando l'invio è davvero andato a buon fine
+      // (evita falsi positivi quando l'utente non ha completato i consensi o l'email è invalida)
+      pushDataLayer("survey_completed", {
+        page_path: typeof window !== "undefined" ? window.location.pathname : undefined,
+        score,
+        step: 8,
+      });
       setSubmittedEmail(formData.email || "");
       setStatus("success");
       setFormData(initialState);
@@ -420,6 +439,7 @@ if (errorCode === "already_submitted") {
       try {
         localStorage.removeItem("vt_email_attempts");
         localStorage.setItem("vt_survey_completed", "true");
+        localStorage.setItem("vt_survey_completed_ts", String(Date.now()));
       } catch (e) {
         console.warn("localStorage non disponibile per vt_survey_completed", e);
       }
