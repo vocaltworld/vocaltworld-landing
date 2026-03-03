@@ -598,7 +598,7 @@ if (errorCode === "already_submitted") {
       </p>
     </div>
 
-      <form ref={formRef} className="survey-form" onSubmit={handleSubmit}>
+      <form ref={formRef} className="survey-form" onSubmit={handleSubmit} noValidate>
       {/* 1. Frequenza utilizzo traduttori */}
 <div
   className={
