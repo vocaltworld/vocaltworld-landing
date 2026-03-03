@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 
 const initialState = {
   usageFrequency: "",
@@ -150,6 +150,39 @@ function StepIndicator({ currentStep }) {
   );
 }
 export default function SurveyForm() {
+  const formRef = useRef(null);
+
+  const scrollToFirstInvalid = () => {
+    const form = formRef.current;
+    if (!form) return;
+
+    // First invalid field according to HTML5 validity
+    const firstInvalid = form.querySelector(":invalid");
+    if (!firstInvalid) return;
+
+    try {
+      firstInvalid.scrollIntoView({ behavior: "smooth", block: "center" });
+    } catch (e) {
+      // fallback
+      firstInvalid.scrollIntoView();
+    }
+
+    // Focus + temporary highlight (CSS class added later in styles.css)
+    setTimeout(() => {
+      try {
+        firstInvalid.focus({ preventScroll: true });
+      } catch (e) {
+        try {
+          firstInvalid.focus();
+        } catch (_) {}
+      }
+
+      try {
+        firstInvalid.classList.add("vt-field-error");
+        setTimeout(() => firstInvalid.classList.remove("vt-field-error"), 1600);
+      } catch (_) {}
+    }, 50);
+  };
   const [formData, setFormData] = useState(initialState);
   const [status, setStatus] = useState("idle"); // idle | submitting | success | error
   const [errorMsg, setErrorMsg] = useState("");
@@ -266,6 +299,18 @@ export default function SurveyForm() {
   const handleSubmit = async (e) => {
     e.preventDefault();
     setErrorMsg("");
+
+    // ✅ Se manca una risposta obbligatoria, scrolla automaticamente al primo campo incompleto
+    // (non rompe la logica esistente di privacy/email consent che è gestita sotto)
+    const form = formRef.current;
+    if (form && !form.checkValidity()) {
+      // mostra il messaggio nativo del browser (dove supportato)
+      if (typeof form.reportValidity === "function") {
+        form.reportValidity();
+      }
+      scrollToFirstInvalid();
+      return;
+    }
     // 🔒 BLOCCO IMMEDIATO SE L’UTENTE HA FINITO I TENTATIVI
 if (isBlocked) {
   setStatus("error");
@@ -539,7 +584,7 @@ if (errorCode === "already_submitted") {
       </p>
     </div>
 
-      <form className="survey-form" onSubmit={handleSubmit}>
+      <form ref={formRef} className="survey-form" onSubmit={handleSubmit}>
       {/* 1. Frequenza utilizzo traduttori */}
 <div
   className={

@@ -212,6 +212,73 @@ body {
   transition: opacity 0.25s ease-out, transform 0.25s ease-out;
 }
 
+/* Evidenziazione domanda mancante (scroll + focus) */
+.form-group-missing {
+  position: relative;
+  border-radius: 14px;
+  padding: 12px 12px 14px;
+  margin-left: -12px;
+  margin-right: -12px;
+
+  background: rgba(255, 77, 79, 0.06);
+  border: 1px solid rgba(255, 77, 79, 0.35);
+  box-shadow: 0 0 0 1px rgba(255, 77, 79, 0.25),
+    0 0 18px rgba(255, 77, 79, 0.18);
+
+  animation: missing-pop 220ms ease-out, missing-pulse 1.2s ease-in-out 2;
+}
+
+.form-group-missing label {
+  color: rgba(255, 210, 210, 0.95);
+}
+
+/* Piccolo badge "Required" discreto */
+.missing-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 10px;
+  border-radius: 999px;
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+
+  color: rgba(255, 180, 180, 0.98);
+  background: rgba(255, 77, 79, 0.10);
+  border: 1px solid rgba(255, 77, 79, 0.35);
+}
+
+/* Testo helper sotto la domanda (se lo aggiungi in JSX) */
+.missing-hint {
+  margin-top: 8px;
+  font-size: 0.85rem;
+  color: rgba(255, 160, 160, 0.95);
+  font-weight: 600;
+}
+
+@keyframes missing-pop {
+  from {
+    transform: translateY(2px);
+    opacity: 0.85;
+  }
+  to {
+    transform: translateY(0);
+    opacity: 1;
+  }
+}
+
+@keyframes missing-pulse {
+  0%, 100% {
+    box-shadow: 0 0 0 1px rgba(255, 77, 79, 0.25),
+      0 0 18px rgba(255, 77, 79, 0.18);
+  }
+  50% {
+    box-shadow: 0 0 0 2px rgba(255, 77, 79, 0.45),
+      0 0 26px rgba(255, 77, 79, 0.28);
+  }
+}
+
 .form-group-active {
   opacity: 1;
   transform: translateY(-2px);
@@ -239,6 +306,16 @@ body {
   align-items: center;
   gap: 6px;
   font-size: 0.9rem;
+}
+
+/* Se la domanda mancante contiene pillole, rendi evidente che serve una scelta */
+.form-group-missing .option-pill {
+  border-color: rgba(255, 120, 120, 0.7);
+}
+
+.form-group-missing .option-pill:has(input:checked) {
+  /* quando selezioni, torna al look normale */
+  border-color: transparent;
 }
 
 .option-pill input {
