@@ -151,6 +151,7 @@ function StepIndicator({ currentStep }) {
 }
 export default function SurveyForm() {
   const formRef = useRef(null);
+  const skipStepAutoScrollRef = useRef(false);
 
   const scrollToFirstInvalid = () => {
     const form = formRef.current;
@@ -160,14 +161,22 @@ export default function SurveyForm() {
     const firstInvalid = form.querySelector(":invalid");
     if (!firstInvalid) return;
 
+    // ⚠️ Radio/checkbox inputs can be visually small/hidden: scroll to the question block
+    const questionBlock = firstInvalid.closest(".form-group") || firstInvalid;
+
     try {
-      firstInvalid.scrollIntoView({ behavior: "smooth", block: "center" });
+      questionBlock.scrollIntoView({ behavior: "smooth", block: "center" });
     } catch (e) {
-      // fallback
-      firstInvalid.scrollIntoView();
+      questionBlock.scrollIntoView();
     }
 
-    // Focus + temporary highlight (CSS class added later in styles.css)
+    // Highlight the question block using the class defined in styles.css
+    try {
+      questionBlock.classList.add("form-group-missing");
+      setTimeout(() => questionBlock.classList.remove("form-group-missing"), 1600);
+    } catch (_) {}
+
+    // Focus + light highlight on the actual input as a fallback
     setTimeout(() => {
       try {
         firstInvalid.focus({ preventScroll: true });
@@ -240,7 +249,11 @@ export default function SurveyForm() {
 
   const [showDetails, setShowDetails] = useState(false);
   const currentStep = computeStep(formData, privacyAccepted, emailConsentAccepted);
-  useEffect(() => {
+  useEffect(() => {// Se abbiamo appena gestito una validazione fallita, non sovrascrivere lo scroll
+if (skipStepAutoScrollRef.current) {
+  skipStepAutoScrollRef.current = false;
+  return;
+}
     // Scroll automatico alla sezione corrente,
     // solo quando siamo nel form (non nelle schermate di successo/errore)
     if (status !== "idle" && status !== "submitting") return;
@@ -305,6 +318,7 @@ export default function SurveyForm() {
     const form = formRef.current;
     if (form && !form.checkValidity()) {
       // mostra il messaggio nativo del browser (dove supportato)
+      skipStepAutoScrollRef.current = true;
       if (typeof form.reportValidity === "function") {
         form.reportValidity();
       }
